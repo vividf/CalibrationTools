@@ -203,6 +203,8 @@ ExtrinsicReflectorBasedCalibrator::ExtrinsicReflectorBasedCalibrator(
     msg_type_ = MsgType::radar_tracks;
   } else if (msg_type == "radar_scan") {
     msg_type_ = MsgType::radar_scan;
+  } else if (msg_type == "radar_cloud") {
+    msg_type_ = MsgType::radar_cloud;
   } else {
     throw std::runtime_error("Invalid param value: " + msg_type);
   }
@@ -280,6 +282,11 @@ ExtrinsicReflectorBasedCalibrator::ExtrinsicReflectorBasedCalibrator(
       "input_radar_msg", rclcpp::SensorDataQoS(),
       std::bind(
         &ExtrinsicReflectorBasedCalibrator::radarScanCallback, this, std::placeholders::_1));
+  } else if (msg_type_ == MsgType::radar_cloud) {
+    radar_cloud_sub_ = this->create_subscription<sensor_msgs::msg::PointCloud2>(
+      "input_radar_msg", rclcpp::SensorDataQoS(),
+      std::bind(
+        &ExtrinsicReflectorBasedCalibrator::radarCloudCallback, this, std::placeholders::_1));
   }
 
   // The service server runs in a dedicated thread
@@ -478,7 +485,7 @@ void ExtrinsicReflectorBasedCalibrator::lidarCallback(
       extractRadarPointcloud(latest_radar_tracks_msgs_);
     radar_detections = extractReflectors(radar_pointcloud_ptr);
     latest_radar_tracks_msgs_->tracks.clear();
-  } else {
+  } else if (msg_type_ == MsgType::radar_scan) {
     if (!latest_radar_scan_msgs_ || latest_radar_scan_msgs_->returns.size() == 0) {
       if (latest_radar_scan_msgs_->returns.size() == 0)
         RCLCPP_INFO(this->get_logger(), "There were no scan");
@@ -488,6 +495,8 @@ void ExtrinsicReflectorBasedCalibrator::lidarCallback(
       extractRadarPointcloud(latest_radar_scan_msgs_);
     radar_detections = extractReflectors(radar_pointcloud_ptr);
     latest_radar_scan_msgs_->returns.clear();
+  } else {
+    radar_detections = extractReflectors(latest_radar_cloud_msgs_);
   }
 
   auto lidar_detections = extractReflectors(msg);
@@ -529,6 +538,12 @@ void ExtrinsicReflectorBasedCalibrator::radarScanCallback(
     latest_radar_scan_msgs_->returns.insert(
       latest_radar_scan_msgs_->returns.end(), msg->returns.begin(), msg->returns.end());
   }
+}
+
+void ExtrinsicReflectorBasedCalibrator::radarCloudCallback(
+  const sensor_msgs::msg::PointCloud2::SharedPtr msg)
+{
+  latest_radar_cloud_msgs_ = msg;
 }
 
 std::vector<Eigen::Vector3d> ExtrinsicReflectorBasedCalibrator::extractReflectors(

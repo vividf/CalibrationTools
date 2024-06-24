@@ -61,7 +61,7 @@ public:
   using index_t = std::uint32_t;
   enum class TransformationType { svd_2d, yaw_only_rotation_2d, svd_3d, zero_roll_3d };
 
-  enum class MsgType { radar_tracks, radar_scan };
+  enum class MsgType { radar_tracks, radar_scan, radar_cloud };
 
   explicit ExtrinsicReflectorBasedCalibrator(const rclcpp::NodeOptions & options);
 
@@ -93,6 +93,8 @@ protected:
   void radarTracksCallback(const radar_msgs::msg::RadarTracks::SharedPtr msg);
 
   void radarScanCallback(const radar_msgs::msg::RadarScan::SharedPtr msg);
+
+  void radarCloudCallback(const sensor_msgs::msg::PointCloud2::SharedPtr msg);
 
   pcl::PointCloud<PointType>::Ptr extractRadarPointcloud(
     const radar_msgs::msg::RadarTracks::SharedPtr msg);
@@ -231,6 +233,7 @@ protected:
   rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr lidar_sub_;
   rclcpp::Subscription<radar_msgs::msg::RadarTracks>::SharedPtr radar_tracks_sub_;
   rclcpp::Subscription<radar_msgs::msg::RadarScan>::SharedPtr radar_scan_sub_;
+  rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr radar_cloud_sub_;
 
   rclcpp::Service<tier4_calibration_msgs::srv::ExtrinsicCalibrator>::SharedPtr
     calibration_request_server_;
@@ -278,6 +281,7 @@ protected:
 
   radar_msgs::msg::RadarTracks::SharedPtr latest_radar_tracks_msgs_;
   radar_msgs::msg::RadarScan::SharedPtr latest_radar_scan_msgs_;
+  sensor_msgs::msg::PointCloud2::SharedPtr latest_radar_cloud_msgs_;
 
   // Tracking
   bool tracking_active_{false};
