@@ -16,6 +16,7 @@
 #include <marker_radar_lidar_calibrator/track.hpp>
 #include <marker_radar_lidar_calibrator/transformation_estimator.hpp>
 #include <tf2_eigen/tf2_eigen.hpp>
+#include <tier4_ground_plane_utils/ground_plane_utils.hpp>
 
 #include <pcl/ModelCoefficients.h>
 #include <pcl/PCLPointCloud2.h>
@@ -169,13 +170,13 @@ ExtrinsicReflectorBasedCalibrator::ExtrinsicReflectorBasedCalibrator(
   radar_background_model_.leaf_size_ =
     this->declare_parameter<double>("radar_background_model_leaf_size", 0.1);
   parameters_.max_calibration_range =
-    this->declare_parameter<double>("max_calibration_range", 50.0);
+    this->declare_parameter<double>("max_calibration_range", 20.0);
   parameters_.background_model_timeout =
-    this->declare_parameter<double>("background_model_timeout", 5.0);
+    this->declare_parameter<double>("background_model_timeout", 1.0);
   parameters_.min_foreground_distance =
     this->declare_parameter<double>("min_foreground_distance", 0.4);
   parameters_.background_extraction_timeout =
-    this->declare_parameter<double>("background_extraction_timeout", 15.0);
+    this->declare_parameter<double>("background_extraction_timeout", 3.0);
   parameters_.ransac_threshold = this->declare_parameter<double>("ransac_threshold", 0.2);
   parameters_.ransac_max_iterations = this->declare_parameter<int>("ransac_max_iterations", 100);
   parameters_.lidar_cluster_max_tolerance =
@@ -253,6 +254,8 @@ ExtrinsicReflectorBasedCalibrator::ExtrinsicReflectorBasedCalibrator(
     this->create_publisher<sensor_msgs::msg::PointCloud2>("lidar_colored_clusters", 10);
   lidar_detections_pub_ =
     this->create_publisher<visualization_msgs::msg::MarkerArray>("lidar_detection_markers", 10);
+  lidar_plane_pub_ =
+    this->create_publisher<sensor_msgs::msg::PointCloud2>("lidar_plane_pointcloud", 10);
 
   radar_background_pub_ =
     this->create_publisher<sensor_msgs::msg::PointCloud2>("radar_background_pointcloud", 10);
@@ -483,7 +486,7 @@ void ExtrinsicReflectorBasedCalibrator::lidarCallback(
     }
     pcl::PointCloud<PointType>::Ptr radar_pointcloud_ptr =
       extractRadarPointcloud(latest_radar_tracks_msgs_);
-    radar_detections = extractReflectors(radar_pointcloud_ptr);
+    radar_detections = extractRadarReflectors(radar_pointcloud_ptr);
     latest_radar_tracks_msgs_->tracks.clear();
   } else if (msg_type_ == MsgType::radar_scan) {
     if (!latest_radar_scan_msgs_ || latest_radar_scan_msgs_->returns.size() == 0) {
@@ -493,13 +496,19 @@ void ExtrinsicReflectorBasedCalibrator::lidarCallback(
     }
     pcl::PointCloud<PointType>::Ptr radar_pointcloud_ptr =
       extractRadarPointcloud(latest_radar_scan_msgs_);
-    radar_detections = extractReflectors(radar_pointcloud_ptr);
+    radar_detections = extractRadarReflectors(radar_pointcloud_ptr);
     latest_radar_scan_msgs_->returns.clear();
   } else {
-    radar_detections = extractReflectors(latest_radar_cloud_msgs_);
+    if (!latest_radar_cloud_msgs_) {
+      RCLCPP_INFO(this->get_logger(), "There were no radar pointlcoud");
+      return;
+    }
+    pcl::PointCloud<PointType>::Ptr radar_pointcloud_ptr =
+      extractRadarPointcloud(latest_radar_cloud_msgs_);
+    radar_detections = extractRadarReflectors(radar_pointcloud_ptr);
   }
 
-  auto lidar_detections = extractReflectors(msg);
+  auto lidar_detections = extractLidarReflectors(msg);
   auto matches = matchDetections(lidar_detections, radar_detections);
 
   bool is_track_converged = trackMatches(matches, msg->header.stamp);
@@ -546,7 +555,7 @@ void ExtrinsicReflectorBasedCalibrator::radarCloudCallback(
   latest_radar_cloud_msgs_ = msg;
 }
 
-std::vector<Eigen::Vector3d> ExtrinsicReflectorBasedCalibrator::extractReflectors(
+std::vector<Eigen::Vector3d> ExtrinsicReflectorBasedCalibrator::extractLidarReflectors(
   const sensor_msgs::msg::PointCloud2::SharedPtr msg)
 {
   lidar_frame_ = msg->header.frame_id;
@@ -599,15 +608,76 @@ std::vector<Eigen::Vector3d> ExtrinsicReflectorBasedCalibrator::extractReflector
     return detections;
   }
 
+  // // Plane ransac (since the orientation changes slightly between data, this one does not use the
+  // // background model)
+  // pcl::ModelCoefficients::Ptr coefficients_ptr(new pcl::ModelCoefficients);
+  // pcl::PointCloud<PointType>::Ptr ransac_filtered_pointcloud_ptr(new pcl::PointCloud<PointType>);
+  // pcl::PointIndices::Ptr inliers_ptr(new pcl::PointIndices);
+  // pcl::SACSegmentation<PointType> seg;
+  // seg.setOptimizeCoefficients(true);
+  // seg.setModelType(pcl::SACMODEL_PLANE);  // cSpell:ignore SACMODEL
+  // seg.setMethodType(pcl::SAC_RANSAC);
+  // seg.setDistanceThreshold(parameters_.ransac_threshold);
+  // seg.setMaxIterations(parameters_.ransac_max_iterations);
+  // seg.setInputCloud(lidar_pointcloud_ptr);
+  // seg.segment(*inliers_ptr, *coefficients_ptr);
+
+  // pcl::ExtractIndices<PointType> extract;
+  // extract.setInputCloud(lidar_pointcloud_ptr);
+  // extract.setIndices(inliers_ptr);
+  // extract.setNegative(false);  // Set to true to remove the planar points
+  // pcl::PointCloud<PointType>::Ptr cloud_plane(new pcl::PointCloud<PointType>());
+  // extract.filter(*cloud_plane);
+
+  // Eigen::Vector4f ground_model = Eigen::Vector4f(
+  //   coefficients_ptr->values[0], coefficients_ptr->values[1], coefficients_ptr->values[2],
+  //   coefficients_ptr->values[3]);
+
+  pcl::PointCloud<PointType>::Ptr ground_plane_inliers_ptr;
+  bool status;
+
+  if (first_time_) {
+    Eigen::Isometry3d initial_base_to_lidar_transform;
+
+    try {
+      rclcpp::Time t = rclcpp::Time(0);
+      rclcpp::Duration timeout = rclcpp::Duration::from_seconds(1.0);
+
+      initial_base_to_lidar_transform = tf2::transformToEigen(
+        tf_buffer_->lookupTransform("base_link", "hesai_top", t, timeout).transform);
+    } catch (tf2::TransformException & ex) {
+      RCLCPP_WARN(this->get_logger(), "could not get initial tf. %s", ex.what());
+    }
+
+    tier4_ground_plane_utils::GroundPlaneExtractorParameters parameters;
+    parameters.verbose_ = true;
+    parameters.use_crop_box_filter_ = false;
+    parameters.use_pca_rough_normal_ = false;
+    parameters.max_inlier_distance_ = 0.01;
+    parameters.min_plane_points_ = 300;
+    parameters.min_plane_points_percentage_ = 1.0;
+    parameters.max_cos_distance_ = 0.5;
+    parameters.max_iterations_ = 1000;
+    parameters.remove_outliers_ = false;
+    parameters.initial_base_to_lidar_transform_ = initial_base_to_lidar_transform;
+    std::vector<Eigen::Vector4d> outlier_models;
+
+    std::tie(status, ground_model_, ground_plane_inliers_ptr) =
+      tier4_ground_plane_utils::extractGroundPlane(
+        lidar_pointcloud_ptr, parameters, outlier_models);
+
+    first_time_ = false;
+    std::cout << "####### ground_model_: ######" << ground_model_.matrix() << std::endl;
+  }
+  ////
   pcl::PointCloud<PointType>::Ptr foreground_pointcloud_ptr;
-  Eigen::Vector4f ground_model;
   extractForegroundPoints(
-    lidar_pointcloud_ptr, lidar_background_model_, true, foreground_pointcloud_ptr, ground_model);
+    lidar_pointcloud_ptr, lidar_background_model_, false, foreground_pointcloud_ptr, ground_model_);
 
   auto clusters = extractClusters(
     foreground_pointcloud_ptr, parameters_.lidar_cluster_max_tolerance,
     parameters_.lidar_cluster_min_points, parameters_.lidar_cluster_max_points);
-  detections = findReflectorsFromClusters(clusters, ground_model);
+  detections = findReflectorsFromClusters(clusters, ground_model_);
 
   // Visualization
   pcl::PointCloud<pcl::PointXYZRGB>::Ptr colored_clusters_pointcloud_ptr(
@@ -659,6 +729,13 @@ std::vector<Eigen::Vector3d> ExtrinsicReflectorBasedCalibrator::extractReflector
   colored_clusters_msg.header = lidar_header_;
   lidar_colored_clusters_pub_->publish(colored_clusters_msg);
 
+  if (ground_plane_inliers_ptr) {
+    sensor_msgs::msg::PointCloud2 plane_msg;
+    pcl::toROSMsg(*ground_plane_inliers_ptr, plane_msg);
+    plane_msg.header = lidar_header_;
+    lidar_plane_pub_->publish(plane_msg);
+  }
+
   return detections;
 }
 
@@ -702,7 +779,18 @@ ExtrinsicReflectorBasedCalibrator::extractRadarPointcloud(
   return radar_pointcloud_ptr;
 }
 
-std::vector<Eigen::Vector3d> ExtrinsicReflectorBasedCalibrator::extractReflectors(
+pcl::PointCloud<ExtrinsicReflectorBasedCalibrator::PointType>::Ptr
+ExtrinsicReflectorBasedCalibrator::extractRadarPointcloud(
+  const sensor_msgs::msg::PointCloud2::SharedPtr msg)
+{
+  radar_frame_ = msg->header.frame_id;
+  radar_header_ = msg->header;
+  pcl::PointCloud<PointType>::Ptr radar_pointcloud_ptr(new pcl::PointCloud<PointType>);
+  pcl::fromROSMsg(*msg, *radar_pointcloud_ptr);
+  return radar_pointcloud_ptr;
+}
+
+std::vector<Eigen::Vector3d> ExtrinsicReflectorBasedCalibrator::extractRadarReflectors(
   pcl::PointCloud<PointType>::Ptr radar_pointcloud_ptr)
 {
   bool extract_background_model;
@@ -741,7 +829,7 @@ std::vector<Eigen::Vector3d> ExtrinsicReflectorBasedCalibrator::extractReflector
   }
 
   pcl::PointCloud<PointType>::Ptr foreground_pointcloud_ptr;
-  Eigen::Vector4f ground_model;
+  Eigen::Vector4d ground_model;
   extractForegroundPoints(
     radar_pointcloud_ptr, radar_background_model_, false, foreground_pointcloud_ptr, ground_model);
   auto clusters = extractClusters(
@@ -845,6 +933,10 @@ void ExtrinsicReflectorBasedCalibrator::extractBackgroundModel(
 
   double time_since_last_update =
     (rclcpp::Time(current_header.stamp) - rclcpp::Time(last_updated_header.stamp)).seconds();
+
+  RCLCPP_INFO(this->get_logger(), "time_since_last_start: %f", time_since_last_start);
+
+  RCLCPP_INFO(this->get_logger(), "time_since_last_update: %f", time_since_last_update);
   if (
     time_since_last_update < parameters_.background_model_timeout &&
     time_since_last_update >= 0.0 &&
@@ -869,7 +961,7 @@ void ExtrinsicReflectorBasedCalibrator::extractBackgroundModel(
 void ExtrinsicReflectorBasedCalibrator::extractForegroundPoints(
   const pcl::PointCloud<PointType>::Ptr & sensor_pointcloud_ptr,
   const BackgroundModel & background_model, bool use_ransac,
-  pcl::PointCloud<PointType>::Ptr & foreground_pointcloud_ptr, Eigen::Vector4f & ground_model)
+  pcl::PointCloud<PointType>::Ptr & foreground_pointcloud_ptr, Eigen::Vector4d & ground_model)
 {
   RCLCPP_INFO(this->get_logger(), "Extracting foreground");
   RCLCPP_INFO(this->get_logger(), "\t initial points: %lu", sensor_pointcloud_ptr->size());
@@ -908,7 +1000,7 @@ void ExtrinsicReflectorBasedCalibrator::extractForegroundPoints(
   RCLCPP_INFO(
     this->get_logger(), "\t voxel filtered points: %lu", voxel_filtered_pointcloud_ptr->size());
 
-  // K-search
+  // // K-search
   pcl::PointCloud<PointType>::Ptr tree_filtered_pointcloud_ptr(new pcl::PointCloud<PointType>);
   tree_filtered_pointcloud_ptr->reserve(voxel_filtered_pointcloud_ptr->size());
   float min_foreground_square_distance =
@@ -924,6 +1016,8 @@ void ExtrinsicReflectorBasedCalibrator::extractForegroundPoints(
       }
     }
   }
+
+  // tree_filtered_pointcloud_ptr = voxel_filtered_pointcloud_ptr;
 
   RCLCPP_INFO(
     this->get_logger(), "\t tree filtered points: %lu", tree_filtered_pointcloud_ptr->size());
@@ -963,7 +1057,8 @@ void ExtrinsicReflectorBasedCalibrator::extractForegroundPoints(
     this->get_logger(), "\t ransac filtered points: %lu", ransac_filtered_pointcloud_ptr->size());
 
   foreground_pointcloud_ptr = ransac_filtered_pointcloud_ptr;
-  ground_model = Eigen::Vector4f(
+  // foreground_pointcloud_ptr = ransac_filtered_pointcloud_ptr;
+  ground_model = Eigen::Vector4d(
     coefficients_ptr->values[0], coefficients_ptr->values[1], coefficients_ptr->values[2],
     coefficients_ptr->values[3]);
 }
@@ -1012,7 +1107,7 @@ ExtrinsicReflectorBasedCalibrator::extractClusters(
 
 std::vector<Eigen::Vector3d> ExtrinsicReflectorBasedCalibrator::findReflectorsFromClusters(
   const std::vector<pcl::PointCloud<PointType>::Ptr> & clusters,
-  const Eigen::Vector4f & ground_model)
+  const Eigen::Vector4d & ground_model)
 {
   std::vector<Eigen::Vector3d> reflector_centers;
   RCLCPP_INFO(this->get_logger(), "Extracting lidar reflectors from clusters");
@@ -1030,16 +1125,19 @@ std::vector<Eigen::Vector3d> ExtrinsicReflectorBasedCalibrator::findReflectorsFr
       }
     }
 
+    std::cout << "check point 1 " << std::endl;
     if (max_h > parameters_.reflector_max_height) {
       continue;
     }
 
+    std::cout << "check point 2 " << std::endl;
     pcl::search::KdTree<PointType>::Ptr tree_ptr(new pcl::search::KdTree<PointType>);
     tree_ptr->setInputCloud(cluster_pointcloud_ptr);
 
     std::vector<int> indexes;
     std::vector<float> squared_distances;
 
+    std::cout << "check point 3 " << std::endl;
     if (
       tree_ptr->radiusSearch(
         highest_point, parameters_.reflector_radius, indexes, squared_distances) > 0) {
@@ -1056,6 +1154,7 @@ std::vector<Eigen::Vector3d> ExtrinsicReflectorBasedCalibrator::findReflectorsFr
         reflector_centers.size(), indexes.size(), center.x(), center.y(), center.z());
       reflector_centers.push_back(center);
     }
+    std::cout << "check point 4 " << std::endl;
   }
 
   return reflector_centers;
@@ -1087,12 +1186,15 @@ bool ExtrinsicReflectorBasedCalibrator::checkInitialTransforms()
 
     radar_optimization_to_lidar_eigen_ = tf2::transformToEigen(radar_optimization_to_lidar_msg_);
 
-    init_radar_to_radar_optimization_msg_ =
-      tf_buffer_->lookupTransform(radar_frame_, parameters_.radar_optimization_frame, t, timeout)
+    = tf_buffer_->lookupTransform(radar_frame_, parameters_.radar_optimization_frame, t, timeout)
         .transform;
 
     initial_radar_to_radar_optimization_eigen_ =
       tf2::transformToEigen(init_radar_to_radar_optimization_msg_);
+
+    RCLCPP_WARN_STREAM(
+      this->get_logger(), "########## debug ######### radar to radar optimization:\n"
+                            << initial_radar_to_radar_optimization_eigen_.matrix());
 
     got_initial_transform_ = true;
   } catch (tf2::TransformException & ex) {

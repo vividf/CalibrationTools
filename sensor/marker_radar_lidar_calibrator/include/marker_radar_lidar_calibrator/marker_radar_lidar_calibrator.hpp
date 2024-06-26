@@ -100,10 +100,12 @@ protected:
     const radar_msgs::msg::RadarTracks::SharedPtr msg);
   pcl::PointCloud<PointType>::Ptr extractRadarPointcloud(
     const radar_msgs::msg::RadarScan::SharedPtr msg);
-
-  std::vector<Eigen::Vector3d> extractReflectors(
+  pcl::PointCloud<PointType>::Ptr extractRadarPointcloud(
     const sensor_msgs::msg::PointCloud2::SharedPtr msg);
-  std::vector<Eigen::Vector3d> extractReflectors(
+
+  std::vector<Eigen::Vector3d> extractLidarReflectors(
+    const sensor_msgs::msg::PointCloud2::SharedPtr msg);
+  std::vector<Eigen::Vector3d> extractRadarReflectors(
     pcl::PointCloud<PointType>::Ptr radar_pointcloud_ptr);
 
   void extractBackgroundModel(
@@ -114,7 +116,7 @@ protected:
   void extractForegroundPoints(
     const pcl::PointCloud<PointType>::Ptr & sensor_pointcloud,
     const BackgroundModel & background_model, bool use_ransac,
-    pcl::PointCloud<PointType>::Ptr & foreground_points, Eigen::Vector4f & ground_model);
+    pcl::PointCloud<PointType>::Ptr & foreground_points, Eigen::Vector4d & ground_model);
 
   std::vector<pcl::PointCloud<PointType>::Ptr> extractClusters(
     const pcl::PointCloud<PointType>::Ptr & foreground_pointcloud,
@@ -122,7 +124,7 @@ protected:
 
   std::vector<Eigen::Vector3d> findReflectorsFromClusters(
     const std::vector<pcl::PointCloud<PointType>::Ptr> & clusters,
-    const Eigen::Vector4f & ground_model);
+    const Eigen::Vector4d & ground_model);
 
   bool checkInitialTransforms();
 
@@ -219,6 +221,7 @@ protected:
 
   rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr markers_pub_;
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr lidar_background_pub_;
+  rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr lidar_plane_pub_;
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr lidar_foreground_pub_;
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr lidar_colored_clusters_pub_;
   rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr lidar_detections_pub_;
@@ -296,6 +299,9 @@ protected:
 
   // Metrics
   std::vector<float> output_metrics_;
+
+  bool first_time_{true};
+  Eigen::Vector4d ground_model_;
 
   MsgType msg_type_;
   TransformationType transformation_type_;
