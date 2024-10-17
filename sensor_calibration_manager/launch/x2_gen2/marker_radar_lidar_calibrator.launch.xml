@@ -41,12 +41,12 @@
   <let name="input_radar_msg" value="/sensing/radar/$(var radar_name)/scan_raw" if="$(eval &quot;'$(var msg_type)'=='radar_scan'&quot;)"/>
   <let name="input_radar_msg" value="/sensing/radar/$(var radar_name)/detection_points" if="$(eval &quot;'$(var msg_type)'=='radar_cloud'&quot;)"/>
 
-  <let name="input_lidar_pointcloud" value="/sensing/lidar/front_upper/pointcloud_raw" if="$(eval &quot;'$(var radar_name)' == 'front_left' &quot;)"/>
-  <let name="input_lidar_pointcloud" value="/sensing/lidar/front_upper/pointcloud_raw" if="$(eval &quot;'$(var radar_name)' == 'front_center' &quot;)"/>
-  <let name="input_lidar_pointcloud" value="/sensing/lidar/front_upper/pointcloud_raw" if="$(eval &quot;'$(var radar_name)' == 'front_right' &quot;)"/>
-  <let name="input_lidar_pointcloud" value="/sensing/lidar/rear_upper/pointcloud_raw" if="$(eval &quot;'$(var radar_name)' == 'rear_left' &quot;)"/>
-  <let name="input_lidar_pointcloud" value="/sensing/lidar/rear_upper/pointcloud_raw" if="$(eval &quot;'$(var radar_name)' == 'rear_center' &quot;)"/>
-  <let name="input_lidar_pointcloud" value="/sensing/lidar/rear_upper/pointcloud_raw" if="$(eval &quot;'$(var radar_name)' == 'rear_right' &quot;)"/>
+  <let name="input_lidar_pointcloud" value="/sensing/lidar/front_upper/pointcloud_raw_ex" if="$(eval &quot;'$(var radar_name)' == 'front_left' &quot;)"/>
+  <let name="input_lidar_pointcloud" value="/sensing/lidar/front_upper/pointcloud_raw_ex" if="$(eval &quot;'$(var radar_name)' == 'front_center' &quot;)"/>
+  <let name="input_lidar_pointcloud" value="/sensing/lidar/front_upper/pointcloud_raw_ex" if="$(eval &quot;'$(var radar_name)' == 'front_right' &quot;)"/>
+  <let name="input_lidar_pointcloud" value="/sensing/lidar/rear_upper/pointcloud_raw_ex" if="$(eval &quot;'$(var radar_name)' == 'rear_left' &quot;)"/>
+  <let name="input_lidar_pointcloud" value="/sensing/lidar/rear_upper/pointcloud_raw_ex" if="$(eval &quot;'$(var radar_name)' == 'rear_center' &quot;)"/>
+  <let name="input_lidar_pointcloud" value="/sensing/lidar/rear_upper/pointcloud_raw_ex" if="$(eval &quot;'$(var radar_name)' == 'rear_right' &quot;)"/>
 
   <node pkg="tf2_ros" exec="static_transform_publisher" name="lidar_broadcaster" output="screen" args="0 0 0 0 0 0 $(var radar_frame) radar_frame"/>
 
