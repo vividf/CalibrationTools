@@ -1406,13 +1406,7 @@ std::pair<double, double> ExtrinsicReflectorBasedCalibrator::computeCalibrationE
     auto radar_estimation = track.getRadarEstimation();
     auto lidar_estimation_transformed = radar_to_lidar_isometry * lidar_estimation;
 
-    if (
-      transformation_type_ == TransformationType::yaw_only_rotation_2d ||
-      transformation_type_ == TransformationType::svd_2d) {
-      lidar_estimation_transformed.z() = 0.0;
-      radar_estimation.z() = 0.0;
-    }
-    distance_error += (lidar_estimation_transformed - radar_estimation).norm();
+    distance_error += getDistanceError(lidar_estimation_transformed, radar_estimation);
     yaw_error += getYawError(lidar_estimation_transformed, radar_estimation);
   }
 
@@ -1986,9 +1980,21 @@ geometry_msgs::msg::Point ExtrinsicReflectorBasedCalibrator::eigenToPointMsg(
   return p;
 }
 
-double ExtrinsicReflectorBasedCalibrator::getYawError(
-  const Eigen::Vector3d & v1, const Eigen::Vector3d & v2)
+double ExtrinsicReflectorBasedCalibrator::getDistanceError(Eigen::Vector3d v1, Eigen::Vector3d v2)
 {
+  if (
+    transformation_type_ == TransformationType::yaw_only_rotation_2d ||
+    transformation_type_ == TransformationType::svd_2d) {
+    v1.z() = 0.0;
+    v2.z() = 0.0;
+  }
+  return (v1 - v2).norm();
+}
+
+double ExtrinsicReflectorBasedCalibrator::getYawError(Eigen::Vector3d v1, Eigen::Vector3d v2)
+{
+  v1.z() = 0.0;
+  v2.z() = 0.0;
   return std::abs(std::acos(v1.dot(v2) / (v1.norm() * v2.norm())));
 }
 
