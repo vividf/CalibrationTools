@@ -31,13 +31,18 @@
 #include <pcl_conversions/pcl_conversions.h>
 #include <tf2/utils.h>
 
+#include <algorithm>
 #include <chrono>
 #include <cstddef>
 #include <iostream>
 #include <limits>
+#include <memory>
 #include <numeric>
 #include <sstream>
+#include <string>
 #include <tuple>
+#include <utility>
+#include <vector>
 
 #define UPDATE_PARAM(PARAM_STRUCT, NAME) update_param(parameters, #NAME, PARAM_STRUCT.NAME)
 
