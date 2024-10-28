@@ -170,7 +170,8 @@ protected:
   void deleteTrackMarkers();
   void drawCalibrationStatusText();
   geometry_msgs::msg::Point eigenToPointMsg(const Eigen::Vector3d & p_eigen);
-  double getYawError(const Eigen::Vector3d & v1, const Eigen::Vector3d & v2);
+  double getDistanceError(const Eigen::Vector3d v1, const Eigen::Vector3d v2);
+  double getYawError(const Eigen::Vector3d v1, const Eigen::Vector3d v2);
 
   rcl_interfaces::msg::SetParametersResult paramCallback(
     const std::vector<rclcpp::Parameter> & parameters);
