@@ -196,7 +196,7 @@ ExtrinsicReflectorBasedCalibrator::ExtrinsicReflectorBasedCalibrator(
   parameters_.reflector_max_height = this->declare_parameter<double>("reflector_max_height", 1.2);
   parameters_.max_matching_distance = this->declare_parameter<double>("max_matching_distance", 1.0);
   parameters_.max_number_of_combination_samples = static_cast<std::size_t>(
-    this->declare_parameter<int>("max_number_of_combination_samples", 10000));
+    this->declare_parameter<int>("max_number_of_combination_samples", 2000));
 
   auto msg_type = this->declare_parameter<std::string>("msg_type");
   auto transformation_type = this->declare_parameter<std::string>("transformation_type");
