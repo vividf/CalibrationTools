@@ -173,11 +173,11 @@ ExtrinsicReflectorBasedCalibrator::ExtrinsicReflectorBasedCalibrator(
   parameters_.max_calibration_range =
     this->declare_parameter<double>("max_calibration_range", 50.0);
   parameters_.background_model_timeout =
-    this->declare_parameter<double>("background_model_timeout", 5.0);
+    this->declare_parameter<double>("background_model_timeout", 3.0);
   parameters_.min_foreground_distance =
     this->declare_parameter<double>("min_foreground_distance", 0.4);
   parameters_.background_extraction_timeout =
-    this->declare_parameter<double>("background_extraction_timeout", 15.0);
+    this->declare_parameter<double>("background_extraction_timeout", 5.0);
   parameters_.ransac_threshold = this->declare_parameter<double>("ransac_threshold", 0.2);
   parameters_.ransac_max_iterations = this->declare_parameter<int>("ransac_max_iterations", 100);
   parameters_.lidar_cluster_max_tolerance =
@@ -192,7 +192,7 @@ ExtrinsicReflectorBasedCalibrator::ExtrinsicReflectorBasedCalibrator(
     this->declare_parameter<int>("radar_cluster_min_points", 1);
   parameters_.radar_cluster_max_points =
     this->declare_parameter<int>("radar_cluster_max_points", 10);
-  parameters_.reflector_radius = this->declare_parameter<double>("reflector_radius", 0.1);
+  parameters_.reflector_radius = this->declare_parameter<double>("reflector_radius", 0.095);
   parameters_.reflector_max_height = this->declare_parameter<double>("reflector_max_height", 1.2);
   parameters_.max_matching_distance = this->declare_parameter<double>("max_matching_distance", 1.0);
   parameters_.max_number_of_combination_samples = static_cast<std::size_t>(
@@ -1063,14 +1063,26 @@ std::vector<Eigen::Vector3d> ExtrinsicReflectorBasedCalibrator::findReflectorsFr
     if (
       tree_ptr->radiusSearch(
         highest_point, parameters_.reflector_radius, indexes, squared_distances) > 0) {
-      Eigen::Vector3d center = Eigen::Vector3d::Zero();
+      // Eigen::Vector3d center = Eigen::Vector3d::Zero();
 
+      // for (const auto & index : indexes) {
+      //   const auto & p = cluster_pointcloud_ptr->points[index];
+      //   center += Eigen::Vector3d(p.x, p.y, p.z);
+      // }
+
+      // center /= indexes.size();
+
+      // second way to measure center of reflector
+      Eigen::Vector3d center = Eigen::Vector3d::Zero();
+      double min_y_distance = std::numeric_limits<double>::infinity();
       for (const auto & index : indexes) {
         const auto & p = cluster_pointcloud_ptr->points[index];
-        center += Eigen::Vector3d(p.x, p.y, p.z);
-      }
 
-      center /= indexes.size();
+        if (p.y < min_y_distance) {
+          min_y_distance = p.y;          
+          center = Eigen::Vector3d(p.x, p.y, p.z);
+        }
+      }
       RCLCPP_INFO(
         this->get_logger(), "\t Lidar reflector id=%lu size=%lu center: x=%.2f y=%.2f z=%.2f",
         reflector_centers.size(), indexes.size(), center.x(), center.y(), center.z());
@@ -1723,9 +1735,9 @@ void ExtrinsicReflectorBasedCalibrator::visualizationMarkers(
     marker.pose.position.y = detection_center.y();
     marker.pose.position.z = detection_center.z();
     marker.pose.orientation.w = 1.0;
-    marker.scale.x = parameters_.reflector_radius;
-    marker.scale.y = parameters_.reflector_radius;
-    marker.scale.z = parameters_.reflector_radius;
+    marker.scale.x = 0.01;
+    marker.scale.y = 0.01;
+    marker.scale.z = 0.01;
     marker.color.a = 0.6;
     marker.color.r = 0.0;
     marker.color.g = 0.0;
