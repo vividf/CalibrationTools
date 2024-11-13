@@ -136,14 +136,13 @@ protected:
     const std::vector<Eigen::Vector3d> & radar_detections);
 
   bool trackMatches(
-    const std::vector<std::pair<Eigen::Vector3d, Eigen::Vector3d>> & matches,
-    builtin_interfaces::msg::Time & time);
+    const std::vector<std::pair<Eigen::Vector3d, Eigen::Vector3d>> & matches);
 
   std::tuple<
     pcl::PointCloud<common_types::PointType>::Ptr, pcl::PointCloud<common_types::PointType>::Ptr>
   getPointsSet();
-  std::tuple<double, double> get2DRotationDelta(
-    std::vector<Track> converged_tracks, bool is_crossval);
+  // std::tuple<double, double> get2DRotationDelta(
+  //   std::vector<Track> converged_tracks, bool is_crossval);
 
   std::pair<double, double> computeCalibrationError(
     const Eigen::Isometry3d & radar_to_lidar_isometry);
@@ -299,8 +298,9 @@ protected:
   bool tracking_active_{false};
   int current_new_tracks_{false};
   TrackFactory::Ptr factory_ptr_;
-  std::vector<Track> active_tracks_;
-  std::vector<Track> converged_tracks_;
+  //std::vector<Track> active_tracks_;
+  //std::vector<Track> converged_tracks_;
+  std::vector<std::pair<Eigen::Vector3d, Eigen::Vector3d>> converged_tracks_;
 
   // Metrics
   std::vector<float> output_metrics_;
@@ -308,6 +308,8 @@ protected:
   MsgType msg_type_;
   TransformationType transformation_type_;
   static constexpr int MARKER_SIZE_PER_TRACK = 8;
+  int count_ = 0;
+  std::vector<std::pair<Eigen::Vector3d, Eigen::Vector3d>> counting_matches_;
 };
 
 }  // namespace marker_radar_lidar_calibrator
