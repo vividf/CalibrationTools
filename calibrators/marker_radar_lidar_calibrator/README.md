@@ -171,6 +171,7 @@ Below, you can see how the algorithm is implemented in the `marker_radar_lidar_c
 | `max_initial_calibration_translation_error` | `double`      | `1.0`                                                         | Maximum allowable translation error in meters in the calibration process. If this error exceeds the specified value, a warning message will appear in the console. |
 | `max_initial_calibration_rotation_error`    | `double`      | `45.0`                                                        | Maximum allowable rotation error in degrees in the calibration process. If this error exceeds the specified value, a warning message will appear in the console.   |
 | `max_number_of_combination_samples`         | `int`         | `10000`                                                       | The maximum number of samples from combinations that are used for cross-validation during the calibration process.                                                 |
+| `match_count_for_convergence`                     | `int`      | `20`                                                         | Number of match count for converge to the center of corner reflector                                                                                                 |
 
 ## Requirements
 

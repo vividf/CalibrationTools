@@ -14,7 +14,6 @@
 
 #include <autoware/universe_utils/geometry/geometry.hpp>
 #include <marker_radar_lidar_calibrator/marker_radar_lidar_calibrator.hpp>
-#include <marker_radar_lidar_calibrator/track.hpp>
 #include <marker_radar_lidar_calibrator/transformation_estimator.hpp>
 #include <tf2_eigen/tf2_eigen.hpp>
 
@@ -35,7 +34,6 @@
 #include <cstddef>
 #include <iostream>
 #include <limits>
-#include <numeric>
 #include <sstream>
 #include <tuple>
 
@@ -107,6 +105,7 @@ rcl_interfaces::msg::SetParametersResult ExtrinsicReflectorBasedCalibrator::para
     UPDATE_PARAM(p, max_initial_calibration_translation_error);
     UPDATE_PARAM(p, max_initial_calibration_rotation_error);
     UPDATE_PARAM(p, max_number_of_combination_samples);
+    UPDATE_PARAM(p, match_count_for_convergence);
     // transaction succeeds, now assign values
     parameters_ = p;
   } catch (const rclcpp::exceptions::InvalidParameterTypeException & e) {
@@ -197,6 +196,8 @@ ExtrinsicReflectorBasedCalibrator::ExtrinsicReflectorBasedCalibrator(
   parameters_.max_matching_distance = this->declare_parameter<double>("max_matching_distance", 1.0);
   parameters_.max_number_of_combination_samples = static_cast<std::size_t>(
     this->declare_parameter<int>("max_number_of_combination_samples", 2000));
+  parameters_.match_count_for_convergence = static_cast<std::size_t>(
+    this->declare_parameter<int>("match_count_for_convergence", 20));
 
   auto msg_type = this->declare_parameter<std::string>("msg_type");
   auto transformation_type = this->declare_parameter<std::string>("transformation_type");
@@ -223,27 +224,10 @@ ExtrinsicReflectorBasedCalibrator::ExtrinsicReflectorBasedCalibrator(
     throw std::runtime_error("Invalid param value: " + transformation_type);
   }
 
-  double initial_lidar_cov = this->declare_parameter<double>("initial_lidar_cov", 0.5);
-  double initial_radar_cov = this->declare_parameter<double>("initial_radar_cov", 2.0);
-  double lidar_measurement_cov = this->declare_parameter<double>("lidar_measurement_cov", 0.03);
-  double radar_measurement_cov = this->declare_parameter<double>("radar_measurement_cov", 0.05);
-  double lidar_process_cov = this->declare_parameter<double>("lidar_process_cov", 0.01);
-  double radar_process_cov = this->declare_parameter<double>("radar_process_cov", 0.01);
-  double lidar_convergence_thresh =
-    this->declare_parameter<double>("lidar_convergence_thresh", 0.03);
-  double radar_convergence_thresh =
-    this->declare_parameter<double>("radar_convergence_thresh", 0.03);
-  double timeout_thresh = this->declare_parameter<double>("timeout_thresh", 3.0);
-
   parameters_.max_initial_calibration_translation_error =
     this->declare_parameter<double>("max_initial_calibration_translation_error", 1.0);
   parameters_.max_initial_calibration_rotation_error =
     this->declare_parameter<double>("max_initial_calibration_rotation_error", 45.0);
-
-  factory_ptr_ = std::make_shared<TrackFactory>(
-    initial_lidar_cov, initial_radar_cov, lidar_measurement_cov, radar_measurement_cov,
-    lidar_process_cov, radar_process_cov, lidar_convergence_thresh, radar_convergence_thresh,
-    timeout_thresh, parameters_.max_matching_distance);
 
   lidar_background_pub_ =
     this->create_publisher<sensor_msgs::msg::PointCloud2>("lidar_background_pointcloud", 10);
@@ -431,11 +415,6 @@ void ExtrinsicReflectorBasedCalibrator::trackingRequestCallback(
     if (!tracking_active_) {
       break;
     }
-
-    // RCLCPP_WARN_THROTTLE(
-    //   this->get_logger(), *this->get_clock(), 5000,
-    //   "Waiting for detections to converge. Active tracks=%lu. New tracks=%d", active_tracks_.size(),
-    //   current_new_tracks_);
   }
 
   RCLCPP_INFO(this->get_logger(), "New converged detections: %d", current_new_tracks_);
@@ -505,6 +484,11 @@ void ExtrinsicReflectorBasedCalibrator::lidarCallback(
   }
 
   auto lidar_detections = extractLidarReflectors(msg);
+
+  if(!checkInitialTransforms())
+    return;
+
+
   auto matches = matchDetections(lidar_detections, radar_detections);
 
   bool is_track_converged = trackMatches(matches);
@@ -1062,26 +1046,19 @@ std::vector<Eigen::Vector3d> ExtrinsicReflectorBasedCalibrator::findReflectorsFr
     if (
       tree_ptr->radiusSearch(
         highest_point, parameters_.reflector_radius, indexes, squared_distances) > 0) {
-      // Eigen::Vector3d center = Eigen::Vector3d::Zero();
 
-      // for (const auto & index : indexes) {
-      //   const auto & p = cluster_pointcloud_ptr->points[index];
-      //   center += Eigen::Vector3d(p.x, p.y, p.z);
-      // }
-
-      // center /= indexes.size();
-
-      // second way to measure center of reflector
+      //  Locate the center of the reflector at the maximum distance
       Eigen::Vector3d center = Eigen::Vector3d::Zero();
-      double min_y_distance = std::numeric_limits<double>::infinity();
+      double max_distance = -std::numeric_limits<double>::infinity();
       for (const auto & index : indexes) {
-        const auto & p = cluster_pointcloud_ptr->points[index];
-
-        if (p.y < min_y_distance) {
-          min_y_distance = p.y;          
-          center = Eigen::Vector3d(p.x, p.y, p.z);
+        const auto & point = cluster_pointcloud_ptr->points[index];
+        const auto point_xy_distance = std::hypot(point.x, point.y);
+        if (point_xy_distance > max_distance) {
+          max_distance = point_xy_distance;        
+          center = Eigen::Vector3d(point.x, point.y, point.z);
         }
       }
+
       RCLCPP_INFO(
         this->get_logger(), "\t Lidar reflector id=%lu size=%lu center: x=%.2f y=%.2f z=%.2f",
         reflector_centers.size(), indexes.size(), center.x(), center.y(), center.z());
@@ -1094,12 +1071,12 @@ std::vector<Eigen::Vector3d> ExtrinsicReflectorBasedCalibrator::findReflectorsFr
 
 bool ExtrinsicReflectorBasedCalibrator::checkInitialTransforms()
 {
-  if (lidar_frame_ == "" || radar_frame_ == "") {
-    return false;
-  }
-
   if (got_initial_transform_) {
     return true;
+  }
+  
+  if (lidar_frame_ == "" || radar_frame_ == "") {
+    return false;
   }
 
   try {
@@ -1149,7 +1126,7 @@ ExtrinsicReflectorBasedCalibrator::matchDetections(
 {
   std::vector<std::pair<Eigen::Vector3d, Eigen::Vector3d>> matched_detections;
 
-  if (lidar_detections.size() == 0 || radar_detections.size() == 0 || !checkInitialTransforms()) {
+  if (lidar_detections.size() == 0 || radar_detections.size() == 0) {
     return matched_detections;
   }
 
@@ -1259,139 +1236,117 @@ bool ExtrinsicReflectorBasedCalibrator::trackMatches(
   if (!tracking_active_) {
     return false;
   }
-
-  // // Check if active tracks expired
-  // auto timed_out_end = std::remove_if(
-  //   active_tracks_.begin(), active_tracks_.end(),
-  //   [&current_time](const auto & track) { return track.timedOut(current_time); });
-
-  // active_tracks_.erase(timed_out_end, active_tracks_.end());
-
-  // // Update tracks
-  // for (const auto & [lidar_detection, radar_detection] : matches) {
-  //   if (std::any_of(
-  //         converged_tracks_.begin(), converged_tracks_.end(),
-  //         [&lidar_detection, &radar_detection](auto & track) {
-  //           return track.partialMatch(lidar_detection, radar_detection);
-  //         })) {
-  //     continue;
-  //   }
-
-  //   bool new_track = std::all_of(
-  //     active_tracks_.begin(), active_tracks_.end(),
-  //     [&lidar_detection, &radar_detection](auto & track) {
-  //       return !track.match(lidar_detection, radar_detection);
-  //     });
-
-  //   if (new_track) {
-  //     active_tracks_.push_back(
-  //       factory_ptr_->makeTrack(lidar_detection, radar_detection, current_time));
-  //   } else {
-  //     std::for_each(
-  //       active_tracks_.begin(), active_tracks_.end(),
-  //       [&lidar_detection, &radar_detection](auto & track) {
-  //         track.updateIfMatch(lidar_detection, radar_detection);
-  //       });
-  //   }
-  // }
-
-  // // Move converged tracks
-  // std::copy_if(
-  //   active_tracks_.begin(), active_tracks_.end(), std::back_inserter(converged_tracks_),
-  //   [](auto & track) { return track.converged(); });
-
-  // current_new_tracks_ += std::transform_reduce(
-  //   active_tracks_.begin(), active_tracks_.end(), 0, std::plus{},
-  //   [](auto & track) { return track.converged(); });
-
-  // bool is_track_converged = std::any_of(
-  //   active_tracks_.begin(), active_tracks_.end(), [](auto & track) { return track.converged(); });
-
-  // auto converged_end = std::remove_if(
-  //   active_tracks_.begin(), active_tracks_.end(),
-  //   [&current_time](auto & track) { return track.converged(); });
-
-  // active_tracks_.erase(converged_end, active_tracks_.end());
-
-  // if (current_new_tracks_ > 0 && active_tracks_.size() == 0) {
-  //   tracking_active_ = false;
-  // }
-
-  // NEW
-  // TODO: 經過幾次之後 
-  // tracking_active_ = false
-  //
-  
+ 
   count_++;
-  if(count_ < 10) {
-    counting_matches_.insert(counting_matches_.end(), matches.begin(), matches.end());
+  if (count_ < parameters_.match_count_for_convergence) {
+    for (const auto& match : matches) {
+      bool added_to_existing_group = false;
+
+      for (auto& track_group : converging_tracks_) {
+        bool is_tracking_same_match = std::any_of(
+          track_group.begin(), track_group.end(),
+          [this, &match](const Track& track) {
+            double lidar_distance = (track.lidar_estimation - match.first).norm();
+            double radar_distance = (track.radar_estimation - match.second).norm();
+            return lidar_distance < parameters_.reflector_radius &&
+                   radar_distance < parameters_.reflector_radius;
+          });
+
+        if (is_tracking_same_match) {
+          track_group.emplace_back(Track{match.first, match.second});
+          added_to_existing_group = true;
+          break;
+        }
+      }
+
+      if (!added_to_existing_group) {
+        converging_tracks_.emplace_back(std::vector<Track>{Track{match.first, match.second}});
+      }
+    }
     return false;
   }
-  
-  auto min_y_match = std::min_element(
-      counting_matches_.begin(), counting_matches_.end(),
-      [](const std::pair<Eigen::Vector3d, Eigen::Vector3d>& a,
-          const std::pair<Eigen::Vector3d, Eigen::Vector3d>& b) {
-          return a.first.y() < b.first.y();
+
+  // Proceed only if we have enough tracks in each converging track group
+  converging_tracks_.erase(
+  std::remove_if(
+    converging_tracks_.begin(), converging_tracks_.end(),
+    [this](const std::vector<Track>& tracks) {
+      return tracks.size() < static_cast<size_t>(parameters_.match_count_for_convergence / 2);
+    }),
+  converging_tracks_.end());
+ 
+  for (const auto& track_group : converging_tracks_) {
+    auto max_distance_track = std::max_element(
+      track_group.begin(), track_group.end(),
+      [](const Track& a, const Track& b) {
+        double distance_a = std::hypot(a.lidar_estimation.x(), a.lidar_estimation.y());
+        double distance_b = std::hypot(b.lidar_estimation.x(), b.lidar_estimation.y());
+        return distance_a < distance_b;
       });
+    
+    converged_tracks_.push_back(*max_distance_track);
+  }
 
   RCLCPP_INFO(
-        this->get_logger(), "counting_matches number= %lu", counting_matches_.size());
+    this->get_logger(), "counting_matches number= %lu", converging_tracks_.size());
+  RCLCPP_INFO(
+    this->get_logger(), "converged_tracks size= %lu", converged_tracks_.size());
 
-  converged_tracks_.push_back(*min_y_match);
+  current_new_tracks_ = converging_tracks_.size();
   tracking_active_ = false;
   count_ = 0;
-  counting_matches_.clear();
+  if(!current_new_tracks_) {
+    return false;
+  }
+  converging_tracks_.clear();
   return true;
 }
 
-// std::tuple<double, double> ExtrinsicReflectorBasedCalibrator::get2DRotationDelta(
-//   std::vector<Track> converged_tracks, bool is_crossval)
-// {
-//   double delta_cos_sum = 0.0;
-//   double delta_sin_sum = 0.0;
+std::tuple<double, double> ExtrinsicReflectorBasedCalibrator::get2DRotationDelta(
+  std::vector<Track> converged_tracks, bool is_crossval)
+{
+  double delta_cos_sum = 0.0;
+  double delta_sin_sum = 0.0;
 
-//   for (std::size_t track_index = 0; track_index < converged_tracks.size(); track_index++) {
-//     auto track = converged_tracks[track_index];
-//     // lidar coordinates
-//     const auto & [lidar_estimation, radar_estimation_rcs] = track;
-//     //const auto & lidar_estimation = track.getLidarEstimation();
-//     // to radar coordinates
-//     const auto & lidar_transformed_estimation = initial_radar_to_lidar_eigen_ * lidar_estimation;
-//     //const auto & radar_estimation_rcs = track.getRadarEstimation();
+  for (std::size_t track_index = 0; track_index < converged_tracks.size(); track_index++) {
+    auto track = converged_tracks[track_index];
+    // lidar coordinates
+    const auto & [lidar_estimation, radar_estimation_rcs] = track;
+    // to radar coordinates
+    const auto & lidar_transformed_estimation = initial_radar_to_lidar_eigen_ * lidar_estimation;
 
-//     const double lidar_transformed_norm = lidar_transformed_estimation.norm();
-//     const double lidar_transformed_cos = lidar_transformed_estimation.x() / lidar_transformed_norm;
-//     const double lidar_transformed_sin = lidar_transformed_estimation.y() / lidar_transformed_norm;
+    const double lidar_transformed_norm = lidar_transformed_estimation.norm();
+    const double lidar_transformed_cos = lidar_transformed_estimation.x() / lidar_transformed_norm;
+    const double lidar_transformed_sin = lidar_transformed_estimation.y() / lidar_transformed_norm;
 
-//     const double radar_norm = radar_estimation_rcs.norm();
-//     const double radar_cos = radar_estimation_rcs.x() / radar_norm;
-//     const double radar_sin = radar_estimation_rcs.y() / radar_norm;
+    const double radar_norm = radar_estimation_rcs.norm();
+    const double radar_cos = radar_estimation_rcs.x() / radar_norm;
+    const double radar_sin = radar_estimation_rcs.y() / radar_norm;
 
-//     // sin(a-b) = sin(a)*cos(b) - cos(a)*sin(b)
-//     // cos(a-b) = cos(a)*cos(b) + sin(a)*sin(b)
-//     // a = lidar, b = radar
-//     double delta_angle_sin = lidar_transformed_sin * radar_cos - lidar_transformed_cos * radar_sin;
-//     double delta_angle_cos = lidar_transformed_cos * radar_cos + lidar_transformed_sin * radar_sin;
-//     delta_sin_sum += delta_angle_sin;
-//     delta_cos_sum += delta_angle_cos;
+    // sin(a-b) = sin(a)*cos(b) - cos(a)*sin(b)
+    // cos(a-b) = cos(a)*cos(b) + sin(a)*sin(b)
+    // a = lidar, b = radar
+    double delta_angle_sin = lidar_transformed_sin * radar_cos - lidar_transformed_cos * radar_sin;
+    double delta_angle_cos = lidar_transformed_cos * radar_cos + lidar_transformed_sin * radar_sin;
+    delta_sin_sum += delta_angle_sin;
+    delta_cos_sum += delta_angle_cos;
 
-//     if (!is_crossval) {
-//       // logging
-//       RCLCPP_INFO_STREAM(this->get_logger(), "lidar_estimation:\n" << lidar_estimation.matrix());
-//       RCLCPP_INFO_STREAM(
-//         this->get_logger(), "lidar_transformed_estimation:\n"
-//                               << lidar_transformed_estimation.matrix());
-//       RCLCPP_INFO_STREAM(
-//         this->get_logger(), "radar_estimation_rcs:\n"
-//                               << radar_estimation_rcs.matrix());
-//     }
-//   }
-//   double delta_cos = delta_cos_sum / converged_tracks.size();
-//   double delta_sin = -delta_sin_sum / converged_tracks.size();
+    if (!is_crossval) {
+      // logging
+      RCLCPP_INFO_STREAM(this->get_logger(), "lidar_estimation:\n" << lidar_estimation.matrix());
+      RCLCPP_INFO_STREAM(
+        this->get_logger(), "lidar_transformed_estimation:\n"
+                              << lidar_transformed_estimation.matrix());
+      RCLCPP_INFO_STREAM(
+        this->get_logger(), "radar_estimation_rcs:\n"
+                              << radar_estimation_rcs.matrix());
+    }
+  }
+  double delta_cos = delta_cos_sum / converged_tracks.size();
+  double delta_sin = -delta_sin_sum / converged_tracks.size();
 
-//   return {delta_cos, delta_sin};
-// }
+  return {delta_cos, delta_sin};
+}
 
 std::tuple<
   pcl::PointCloud<common_types::PointType>::Ptr, pcl::PointCloud<common_types::PointType>::Ptr>
@@ -1413,12 +1368,12 @@ ExtrinsicReflectorBasedCalibrator::getPointsSet()
   for (std::size_t track_index = 0; track_index < converged_tracks_.size(); track_index++) {
     auto track = converged_tracks_[track_index];
     // lidar coordinates
-    const auto & [lidar_estimation, radar_estimation_rcs] = track;
+    const auto & lidar_estimation = track.lidar_estimation;
     // to radar optimization coordinates
     const auto & lidar_estimation_ocs = radar_optimization_to_lidar_eigen_ * lidar_estimation;
     // to radar coordinates
     const auto & lidar_transformed_estimation = initial_radar_to_lidar_eigen_ * lidar_estimation;
-    //const auto & radar_estimation_rcs = track.getRadarEstimation();
+    const auto & radar_estimation_rcs = track.radar_estimation;
 
     if (transformation_type_ == TransformationType::svd_2d) {
       lidar_points_ocs->emplace_back(eigen_to_pcl_2d(lidar_estimation_ocs));
@@ -1466,9 +1421,7 @@ TransformationResult ExtrinsicReflectorBasedCalibrator::estimateTransformation()
     radar_optimization_to_lidar_eigen_);
 
   if (transformation_type_ == TransformationType::yaw_only_rotation_2d) {
-    // auto [delta_cos, delta_sin] = get2DRotationDelta(converged_tracks_, false);
-    double delta_cos = 0;
-    double delta_sin = 0;
+    auto [delta_cos, delta_sin] = get2DRotationDelta(converged_tracks_, false);
     estimator.set2DRotationDelta(delta_cos, delta_sin);
     estimator.estimateYawOnlyTransformation();
     transformation_result.calibrated_radar_to_lidar_transformation = estimator.getTransformation();
@@ -1627,7 +1580,7 @@ void ExtrinsicReflectorBasedCalibrator::evaluateCombinations(
     new pcl::PointCloud<common_types::PointType>);
   pcl::PointCloud<common_types::PointType>::Ptr crossval_radar_points_rcs(
     new pcl::PointCloud<common_types::PointType>);
-  std::vector<std::pair<Eigen::Vector3d, Eigen::Vector3d>> crossval_converged_tracks_;
+  std::vector<Track> crossval_converged_tracks_;
   crossval_lidar_points_ocs->reserve(num_of_samples);
   crossval_radar_points_rcs->reserve(num_of_samples);
   crossval_converged_tracks_.reserve(num_of_samples);
@@ -1638,33 +1591,33 @@ void ExtrinsicReflectorBasedCalibrator::evaluateCombinations(
   std::vector<double> crossval_calibrated_yaw_error_vector;
 
   for (const auto & combination : combinations) {
-    // if (transformation_type_ == TransformationType::yaw_only_rotation_2d) {
-    //   crossval_converged_tracks_.clear();
+    if (transformation_type_ == TransformationType::yaw_only_rotation_2d) {
+      crossval_converged_tracks_.clear();
 
-    //   for (std::size_t i = 0; i < combination.size(); i++) {
-    //     crossval_converged_tracks_.push_back(converged_tracks_[i]);
-    //   }
-    //   auto [delta_cos, delta_sin] = get2DRotationDelta(crossval_converged_tracks_, true);
+      for (std::size_t i = 0; i < combination.size(); i++) {
+        crossval_converged_tracks_.push_back(converged_tracks_[i]);
+      }
+      auto [delta_cos, delta_sin] = get2DRotationDelta(crossval_converged_tracks_, true);
 
-    //   crossval_estimator.set2DRotationDelta(delta_cos, delta_sin);
-    //   crossval_estimator.estimateYawOnlyTransformation();
-    // } else {
-    crossval_lidar_points_ocs->clear();
-    crossval_radar_points_rcs->clear();
+      crossval_estimator.set2DRotationDelta(delta_cos, delta_sin);
+      crossval_estimator.estimateYawOnlyTransformation();
+    } else {
+      crossval_lidar_points_ocs->clear();
+      crossval_radar_points_rcs->clear();
 
-    // calculate the transformation.
-    for (std::size_t i = 0; i < combination.size(); i++) {
-      crossval_lidar_points_ocs->emplace_back(
-        transformation_result.lidar_points_ocs->points[combination[i]]);
-      crossval_radar_points_rcs->emplace_back(
-        transformation_result.radar_points_rcs->points[combination[i]]);
+      // calculate the transformation.
+      for (std::size_t i = 0; i < combination.size(); i++) {
+        crossval_lidar_points_ocs->emplace_back(
+          transformation_result.lidar_points_ocs->points[combination[i]]);
+        crossval_radar_points_rcs->emplace_back(
+          transformation_result.radar_points_rcs->points[combination[i]]);
+      }
+      crossval_estimator.setPoints(crossval_lidar_points_ocs, crossval_radar_points_rcs);
+      if (transformation_type_ == TransformationType::zero_roll_3d)
+        crossval_estimator.estimateZeroRollTransformation();
+      else
+        crossval_estimator.estimateSVDTransformation(transformation_type_);
     }
-    crossval_estimator.setPoints(crossval_lidar_points_ocs, crossval_radar_points_rcs);
-    if (transformation_type_ == TransformationType::zero_roll_3d)
-      crossval_estimator.estimateZeroRollTransformation();
-    else
-      crossval_estimator.estimateSVDTransformation(transformation_type_);
-    //}
 
     Eigen::Isometry3d crossval_calibrated_radar_to_lidar_transformation =
       crossval_estimator.getTransformation();
@@ -1732,14 +1685,13 @@ void ExtrinsicReflectorBasedCalibrator::publishMetrics()
 
 void ExtrinsicReflectorBasedCalibrator::calibrateSensors()
 {
-  if (!checkInitialTransforms() || converged_tracks_.size() == 0) {
-    if (converged_tracks_.size() == 0) {
-      std_msgs::msg::Float32MultiArray calibration_metrics_msg = std_msgs::msg::Float32MultiArray();
-      calibration_metrics_msg.data = {0, 0, 0, 0, 0};
-      metrics_pub_->publish(calibration_metrics_msg);
-    }
+  if (converged_tracks_.size() == 0) {
+    std_msgs::msg::Float32MultiArray calibration_metrics_msg = std_msgs::msg::Float32MultiArray();
+    calibration_metrics_msg.data = {0, 0, 0, 0, 0};
+    metrics_pub_->publish(calibration_metrics_msg);
     return;
   }
+  
   output_metrics_.clear();
   auto transformation_result = estimateTransformation();
   evaluateTransformation(transformation_result.calibrated_radar_to_lidar_transformation);
@@ -1916,8 +1868,6 @@ void ExtrinsicReflectorBasedCalibrator::visualizeTrackMarkers()
 
   for (std::size_t track_index = 0; track_index < converged_tracks_.size(); track_index++) {
     auto [lidar_estimation, radar_estimation] = converged_tracks_[track_index];
-    // const auto & lidar_estimation = track.getLidarEstimation();
-    // const auto & radar_estimation = track.getRadarEstimation();
 
     const auto initial_radar_estimation_transformed =
       initial_radar_to_lidar_eigen_.inverse() * radar_estimation;

@@ -16,7 +16,6 @@
 #define MARKER_RADAR_LIDAR_CALIBRATOR__MARKER_RADAR_LIDAR_CALIBRATOR_HPP_
 
 #include <Eigen/Dense>
-#include <marker_radar_lidar_calibrator/track.hpp>
 #include <marker_radar_lidar_calibrator/types.hpp>
 #include <rclcpp/logging.hpp>
 #include <rclcpp/rclcpp.hpp>
@@ -58,6 +57,12 @@ struct TransformationResult
   pcl::PointCloud<common_types::PointType>::Ptr lidar_points_ocs;
   pcl::PointCloud<common_types::PointType>::Ptr radar_points_rcs;
   Eigen::Isometry3d calibrated_radar_to_lidar_transformation;
+};
+
+struct Track 
+{
+  Eigen::Vector3d lidar_estimation;
+  Eigen::Vector3d radar_estimation;
 };
 
 class ExtrinsicReflectorBasedCalibrator : public rclcpp::Node
@@ -141,8 +146,8 @@ protected:
   std::tuple<
     pcl::PointCloud<common_types::PointType>::Ptr, pcl::PointCloud<common_types::PointType>::Ptr>
   getPointsSet();
-  // std::tuple<double, double> get2DRotationDelta(
-  //   std::vector<Track> converged_tracks, bool is_crossval);
+  std::tuple<double, double> get2DRotationDelta(
+    std::vector<Track> converged_tracks, bool is_crossval);
 
   std::pair<double, double> computeCalibrationError(
     const Eigen::Isometry3d & radar_to_lidar_isometry);
@@ -216,6 +221,7 @@ protected:
     double max_initial_calibration_translation_error;
     double max_initial_calibration_rotation_error;
     std::size_t max_number_of_combination_samples;
+    int match_count_for_convergence;
   } parameters_;
 
   // ROS Interface
@@ -297,10 +303,10 @@ protected:
   // Tracking
   bool tracking_active_{false};
   int current_new_tracks_{false};
-  TrackFactory::Ptr factory_ptr_;
-  //std::vector<Track> active_tracks_;
-  //std::vector<Track> converged_tracks_;
-  std::vector<std::pair<Eigen::Vector3d, Eigen::Vector3d>> converged_tracks_;
+
+  int count_ = 0;
+  std::vector<std::vector<Track>> converging_tracks_;
+  std::vector<Track> converged_tracks_;
 
   // Metrics
   std::vector<float> output_metrics_;
@@ -308,8 +314,6 @@ protected:
   MsgType msg_type_;
   TransformationType transformation_type_;
   static constexpr int MARKER_SIZE_PER_TRACK = 8;
-  int count_ = 0;
-  std::vector<std::pair<Eigen::Vector3d, Eigen::Vector3d>> counting_matches_;
 };
 
 }  // namespace marker_radar_lidar_calibrator
