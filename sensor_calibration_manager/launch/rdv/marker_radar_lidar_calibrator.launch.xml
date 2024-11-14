@@ -22,13 +22,16 @@
     <choice value="zero_roll_3d"/>
   </arg>
 
+  <arg name="corner_reflector_estimation_method" default="longest_distance_point">
+    <choice value="longest_distance_point"/>
+    <choice value="average_points"/>
+  </arg>
+
   <arg name="rviz" default="true"/>
 
   <let name="radar_optimization_frame" value="base_link"/>
   <let name="radar_frame" value="$(var radar_name)/radar_link"/>
   <let name="lidar_frame" value="pandar_top"/>
-  <let name="msg_type" value="$(var msg_type)"/>
-  <let name="transformation_type" value="$(var transformation_type)"/>
 
   <let name="input_radar_msg" value="/sensing/radar/$(var radar_name)/objects_raw" if="$(eval &quot;'$(var msg_type)'=='radar_tracks'&quot;)"/>
   <let name="input_radar_msg" value="/sensing/radar/$(var radar_name)/scan_raw" if="$(eval &quot;'$(var msg_type)'=='radar_scan'&quot;)"/>
@@ -46,5 +49,6 @@
     <arg name="input_radar_msg" value="$(var input_radar_msg)"/>
     <arg name="msg_type" value="$(var msg_type)"/>
     <arg name="transformation_type" value="$(var transformation_type)"/>
+    <arg name="corner_reflector_estimation_method" value="$(var corner_reflector_estimation_method)"/>
   </include>
 </launch>

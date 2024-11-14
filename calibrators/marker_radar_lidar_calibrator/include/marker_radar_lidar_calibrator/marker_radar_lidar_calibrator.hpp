@@ -38,12 +38,10 @@
 #include <tf2_ros/static_transform_broadcaster.h>
 #include <tf2_ros/transform_listener.h>
 
-#include <algorithm>
 #include <cstdint>
 #include <limits>
 #include <memory>
 #include <mutex>
-#include <random>
 #include <string>
 #include <tuple>
 #include <utility>
@@ -72,6 +70,8 @@ public:
   enum class TransformationType { svd_2d, yaw_only_rotation_2d, svd_3d, zero_roll_3d };
 
   enum class MsgType { radar_tracks, radar_scan, radar_cloud };
+
+  enum class CornerReflectorEstimationMethod { average_points, longest_distance_point };
 
   explicit ExtrinsicReflectorBasedCalibrator(const rclcpp::NodeOptions & options);
 
@@ -313,6 +313,7 @@ protected:
 
   MsgType msg_type_;
   TransformationType transformation_type_;
+  CornerReflectorEstimationMethod corner_reflector_estimation_method_;
   static constexpr int MARKER_SIZE_PER_TRACK = 8;
 };
 

@@ -30,6 +30,7 @@
 #include <pcl_conversions/pcl_conversions.h>
 #include <tf2/utils.h>
 
+#include <random>
 #include <chrono>
 #include <cstddef>
 #include <iostream>
@@ -197,10 +198,11 @@ ExtrinsicReflectorBasedCalibrator::ExtrinsicReflectorBasedCalibrator(
   parameters_.max_number_of_combination_samples = static_cast<std::size_t>(
     this->declare_parameter<int>("max_number_of_combination_samples", 2000));
   parameters_.match_count_for_convergence = static_cast<std::size_t>(
-    this->declare_parameter<int>("match_count_for_convergence", 20));
+    this->declare_parameter<int>("match_count_for_convergence", 10));
 
   auto msg_type = this->declare_parameter<std::string>("msg_type");
   auto transformation_type = this->declare_parameter<std::string>("transformation_type");
+  auto corner_reflector_estimation_method = this->declare_parameter<std::string>("corner_reflector_estimation_method");
 
   if (msg_type == "radar_tracks") {
     msg_type_ = MsgType::radar_tracks;
@@ -222,6 +224,14 @@ ExtrinsicReflectorBasedCalibrator::ExtrinsicReflectorBasedCalibrator(
     transformation_type_ = TransformationType::zero_roll_3d;
   } else {
     throw std::runtime_error("Invalid param value: " + transformation_type);
+  }
+
+  if (corner_reflector_estimation_method == "average_points") {
+    corner_reflector_estimation_method_ = CornerReflectorEstimationMethod::average_points;
+  } else if (corner_reflector_estimation_method == "longest_distance_point") {
+    corner_reflector_estimation_method_ = CornerReflectorEstimationMethod::longest_distance_point;
+  } else {
+    throw std::runtime_error("Invalid param value: " + corner_reflector_estimation_method);
   }
 
   parameters_.max_initial_calibration_translation_error =
@@ -1047,16 +1057,31 @@ std::vector<Eigen::Vector3d> ExtrinsicReflectorBasedCalibrator::findReflectorsFr
       tree_ptr->radiusSearch(
         highest_point, parameters_.reflector_radius, indexes, squared_distances) > 0) {
 
-      //  Locate the center of the reflector at the maximum distance
       Eigen::Vector3d center = Eigen::Vector3d::Zero();
-      double max_distance = -std::numeric_limits<double>::infinity();
-      for (const auto & index : indexes) {
-        const auto & point = cluster_pointcloud_ptr->points[index];
-        const auto point_xy_distance = std::hypot(point.x, point.y);
-        if (point_xy_distance > max_distance) {
-          max_distance = point_xy_distance;        
-          center = Eigen::Vector3d(point.x, point.y, point.z);
+
+      if(corner_reflector_estimation_method_ == CornerReflectorEstimationMethod::longest_distance_point) {
+        //  Locate the center of the reflector at the maximum distance (This works better for high resolution LiDARs)
+        double max_distance = -std::numeric_limits<double>::infinity();
+        for (const auto & index : indexes) {
+          const auto & point = cluster_pointcloud_ptr->points[index];
+          const Eigen::Vector3d point_in_lidar_frame = Eigen::Vector3d(point.x, point.y, point.z);
+          const Eigen::Vector3d point_in_radar_frame = initial_radar_to_lidar_eigen_ * point_in_lidar_frame;
+
+          const auto point_xy_distance = std::hypot(point_in_radar_frame.x(), point_in_radar_frame.y());
+          if (point_xy_distance > max_distance) {
+            max_distance = point_xy_distance;
+            center = initial_radar_to_lidar_eigen_.inverse() * point_in_radar_frame;        
+          }
         }
+      }
+      else if(corner_reflector_estimation_method_ == CornerReflectorEstimationMethod::average_points) {
+        // Locate the center of the reflector by averaging all of the points in the cluster
+        for (const auto & index : indexes) {
+          const auto & p = cluster_pointcloud_ptr->points[index];
+          center += Eigen::Vector3d(p.x, p.y, p.z);
+        }
+
+        center /= indexes.size();
       }
 
       RCLCPP_INFO(
@@ -1295,10 +1320,11 @@ bool ExtrinsicReflectorBasedCalibrator::trackMatches(
   current_new_tracks_ = converging_tracks_.size();
   tracking_active_ = false;
   count_ = 0;
+  converging_tracks_.clear();
+  
   if(!current_new_tracks_) {
     return false;
   }
-  converging_tracks_.clear();
   return true;
 }
 
