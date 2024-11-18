@@ -9,7 +9,6 @@
   <arg name="input_radar_msg" default="/sensing/radar/front_center/objects_raw"/>
   <arg name="msg_type" default="objects_raw"/>
   <arg name="transformation_type" default="svd_2d"/>
-  <arg name="corner_reflector_estimation_method" default="longest_distance_point"/>
 
   <arg name="use_lidar_initial_crop_box_filter" default="false"/>
   <arg name="lidar_initial_crop_box_min_x" default="-50.0"/>
@@ -35,7 +34,6 @@
       <param name="radar_optimization_frame" value="$(var radar_optimization_frame)"/>
       <param name="msg_type" value="$(var msg_type)"/>
       <param name="transformation_type" value="$(var transformation_type)"/>
-      <param name="corner_reflector_estimation_method" value="$(var corner_reflector_estimation_method)"/>
 
       <remap from="extrinsic_calibration" to="$(var calibration_service_name)"/>
       <remap from="input_lidar_pointcloud" to="$(var input_lidar_pointcloud)"/>

@@ -222,6 +222,7 @@ protected:
     double max_initial_calibration_rotation_error;
     std::size_t max_number_of_combination_samples;
     int match_count_for_convergence;
+    std::size_t reflector_points_threshold;
   } parameters_;
 
   // ROS Interface
@@ -313,7 +314,6 @@ protected:
 
   MsgType msg_type_;
   TransformationType transformation_type_;
-  CornerReflectorEstimationMethod corner_reflector_estimation_method_;
   static constexpr int MARKER_SIZE_PER_TRACK = 8;
 };
 

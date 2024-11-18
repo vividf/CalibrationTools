@@ -22,10 +22,6 @@
     <choice value="zero_roll_3d"/>
   </arg>
 
-  <arg name="corner_reflector_estimation_method" default="longest_distance_point">
-    <choice value="longest_distance_point"/>
-    <choice value="average_points"/>
-  </arg>
 
   <arg name="rviz" default="true"/>
 
@@ -49,6 +45,5 @@
     <arg name="input_radar_msg" value="$(var input_radar_msg)"/>
     <arg name="msg_type" value="$(var msg_type)"/>
     <arg name="transformation_type" value="$(var transformation_type)"/>
-    <arg name="corner_reflector_estimation_method" value="$(var corner_reflector_estimation_method)"/>
   </include>
 </launch>

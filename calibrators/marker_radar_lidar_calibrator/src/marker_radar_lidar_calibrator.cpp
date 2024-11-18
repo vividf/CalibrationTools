@@ -199,11 +199,11 @@ ExtrinsicReflectorBasedCalibrator::ExtrinsicReflectorBasedCalibrator(
     this->declare_parameter<int>("max_number_of_combination_samples", 2000));
   parameters_.match_count_for_convergence = static_cast<std::size_t>(
     this->declare_parameter<int>("match_count_for_convergence", 10));
+  parameters_.reflector_points_threshold = static_cast<int>(
+    this->declare_parameter<int>("reflector_points_threshold", 10));
 
   auto msg_type = this->declare_parameter<std::string>("msg_type");
   auto transformation_type = this->declare_parameter<std::string>("transformation_type");
-  auto corner_reflector_estimation_method = this->declare_parameter<std::string>("corner_reflector_estimation_method");
-
   if (msg_type == "radar_tracks") {
     msg_type_ = MsgType::radar_tracks;
   } else if (msg_type == "radar_scan") {
@@ -224,14 +224,6 @@ ExtrinsicReflectorBasedCalibrator::ExtrinsicReflectorBasedCalibrator(
     transformation_type_ = TransformationType::zero_roll_3d;
   } else {
     throw std::runtime_error("Invalid param value: " + transformation_type);
-  }
-
-  if (corner_reflector_estimation_method == "average_points") {
-    corner_reflector_estimation_method_ = CornerReflectorEstimationMethod::average_points;
-  } else if (corner_reflector_estimation_method == "longest_distance_point") {
-    corner_reflector_estimation_method_ = CornerReflectorEstimationMethod::longest_distance_point;
-  } else {
-    throw std::runtime_error("Invalid param value: " + corner_reflector_estimation_method);
   }
 
   parameters_.max_initial_calibration_translation_error =
@@ -1059,7 +1051,7 @@ std::vector<Eigen::Vector3d> ExtrinsicReflectorBasedCalibrator::findReflectorsFr
 
       Eigen::Vector3d center = Eigen::Vector3d::Zero();
 
-      if(corner_reflector_estimation_method_ == CornerReflectorEstimationMethod::longest_distance_point) {
+      if(cluster_pointcloud_ptr->points.size() > parameters_.reflector_points_threshold) {
         //  Locate the center of the reflector at the maximum distance (This works better for high resolution LiDARs)
         double max_distance = -std::numeric_limits<double>::infinity();
         for (const auto & index : indexes) {
@@ -1074,7 +1066,7 @@ std::vector<Eigen::Vector3d> ExtrinsicReflectorBasedCalibrator::findReflectorsFr
           }
         }
       }
-      else if(corner_reflector_estimation_method_ == CornerReflectorEstimationMethod::average_points) {
+      else {
         // Locate the center of the reflector by averaging all of the points in the cluster
         for (const auto & index : indexes) {
           const auto & p = cluster_pointcloud_ptr->points[index];
