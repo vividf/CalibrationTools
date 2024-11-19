@@ -1516,6 +1516,7 @@ TransformationResult ExtrinsicReflectorBasedCalibrator::estimateTransformation()
   return transformation_result;
 }
 
+
 void ExtrinsicReflectorBasedCalibrator::evaluateTransformation(
   TransformationResult transformation_result)
 {
@@ -1565,6 +1566,10 @@ void ExtrinsicReflectorBasedCalibrator::evaluateTransformation(
           toString(type).c_str(), distance_error, yaw_error);
   }
   output_metrics_.num_of_converged_tracks = converged_tracks_.size();
+  for(const auto & converge_track : converged_tracks_) {
+    output_metrics_.detections.push_back(eigenToPoint(converge_track.radar_estimation));
+  }
+  
 }
 
 void ExtrinsicReflectorBasedCalibrator::findCombinations(
@@ -2084,5 +2089,14 @@ double ExtrinsicReflectorBasedCalibrator::getYawError(Eigen::Vector3d v1, Eigen:
   v2.z() = 0.0;
   return std::abs(std::acos(v1.dot(v2) / (v1.norm() * v2.norm())));
 }
+
+geometry_msgs::msg::Point ExtrinsicReflectorBasedCalibrator::eigenToPoint(const Eigen::Vector3d& eigen_vector) {
+    geometry_msgs::msg::Point point;
+    point.x = eigen_vector.x();
+    point.y = eigen_vector.y();
+    point.z = eigen_vector.z();
+    return point;
+}
+
 
 }  // namespace marker_radar_lidar_calibrator

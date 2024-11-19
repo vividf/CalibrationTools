@@ -235,6 +235,7 @@ protected:
   geometry_msgs::msg::Point eigenToPointMsg(const Eigen::Vector3d & p_eigen);
   double getDistanceError(const Eigen::Vector3d v1, const Eigen::Vector3d v2);
   double getYawError(const Eigen::Vector3d v1, const Eigen::Vector3d v2);
+  geometry_msgs::msg::Point eigenToPoint(const Eigen::Vector3d& eigen_vector);
 
   rcl_interfaces::msg::SetParametersResult paramCallback(
     const std::vector<rclcpp::Parameter> & parameters);
