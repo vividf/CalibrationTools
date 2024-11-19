@@ -58,9 +58,9 @@ void TransformationEstimator::estimateYawOnlyTransformation()
 }
 
 void TransformationEstimator::estimateSVDTransformation(
-  ExtrinsicReflectorBasedCalibrator::TransformationType transformation_type)
+  TransformationType transformation_type)
 {
-  if (transformation_type == ExtrinsicReflectorBasedCalibrator::TransformationType::svd_2d) {
+  if (transformation_type == TransformationType::svd_2d) {
     RCLCPP_INFO(
       rclcpp::get_logger("marker_radar_lidar_calibrator"), "Estimate 2D SVD transformation");
   } else {
@@ -76,7 +76,7 @@ void TransformationEstimator::estimateSVDTransformation(
   Eigen::Isometry3d calibrated_radar_to_radar_optimization_transformation(
     full_radar_to_radar_optimization_transformation.cast<double>());
 
-  if (transformation_type == ExtrinsicReflectorBasedCalibrator::TransformationType::svd_2d) {
+  if (transformation_type == TransformationType::svd_2d) {
     // Check that is is actually a 2D transformation
     auto calibrated_radar_to_radar_optimization_rpy = autoware::universe_utils::getRPY(
       tf2::toMsg(calibrated_radar_to_radar_optimization_transformation).orientation);

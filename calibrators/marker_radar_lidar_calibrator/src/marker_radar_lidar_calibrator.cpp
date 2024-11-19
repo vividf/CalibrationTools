@@ -16,6 +16,7 @@
 #include <marker_radar_lidar_calibrator/marker_radar_lidar_calibrator.hpp>
 #include <marker_radar_lidar_calibrator/transformation_estimator.hpp>
 #include <tf2_eigen/tf2_eigen.hpp>
+#include <tier4_calibration_msgs/msg/detail/calibration_metrics__struct.hpp>
 
 #include <pcl/ModelCoefficients.h>
 #include <pcl/PCLPointCloud2.h>
@@ -251,8 +252,9 @@ ExtrinsicReflectorBasedCalibrator::ExtrinsicReflectorBasedCalibrator(
   tracking_markers_pub_ =
     this->create_publisher<visualization_msgs::msg::MarkerArray>("tracking_markers", 10);
   text_markers_pub_ = this->create_publisher<visualization_msgs::msg::Marker>("text_markers", 10);
-  metrics_pub_ =
-    this->create_publisher<std_msgs::msg::Float32MultiArray>("calibration_metrics", 10);
+  // metrics_pub_ =
+  //   this->create_publisher<std_msgs::msg::Float32MultiArray>("calibration_metrics", 10);
+  metrics_pub_ = this->create_publisher<tier4_calibration_msgs::msg::CalibrationMetrics>("calibration_metrics", 10);
 
   lidar_sub_ = this->create_subscription<sensor_msgs::msg::PointCloud2>(
     "input_lidar_pointcloud", rclcpp::SensorDataQoS(),
@@ -1157,9 +1159,7 @@ ExtrinsicReflectorBasedCalibrator::matchDetections(
     [&radar_to_lidar_transform,
      &transformation_type = this->transformation_type_](const auto & lidar_detection) {
       auto transformed_point = radar_to_lidar_transform * lidar_detection;
-      if (
-        transformation_type == TransformationType::yaw_only_rotation_2d ||
-        transformation_type == TransformationType::svd_2d) {
+      if (transformation_type == TransformationType::svd_2d || transformation_type == TransformationType::yaw_only_rotation_2d) {
         transformed_point.z() = 0.f;
       }
       return transformed_point;
@@ -1393,7 +1393,7 @@ ExtrinsicReflectorBasedCalibrator::getPointsSet()
     const auto & lidar_transformed_estimation = initial_radar_to_lidar_eigen_ * lidar_estimation;
     const auto & radar_estimation_rcs = track.radar_estimation;
 
-    if (transformation_type_ == TransformationType::svd_2d) {
+    if (transformation_type_ == TransformationType::svd_2d || transformation_type_ == TransformationType::yaw_only_rotation_2d) {
       lidar_points_ocs->emplace_back(eigen_to_pcl_2d(lidar_estimation_ocs));
       radar_points_rcs->emplace_back(eigen_to_pcl_2d(radar_estimation_rcs));
     } else {
@@ -1431,6 +1431,21 @@ std::pair<double, double> ExtrinsicReflectorBasedCalibrator::computeCalibrationE
   return std::make_pair(distance_error, yaw_error);
 }
 
+std::string toString(TransformationType type) {
+    switch (type) {
+        case TransformationType::svd_2d:
+            return "svd_2d";
+        case TransformationType::yaw_only_rotation_2d:
+            return "yaw_only_rotation_2d";
+        case TransformationType::svd_3d:
+            return "svd_3d";
+        case TransformationType::zero_roll_3d:
+            return "zero_roll_3d";
+        default:
+            return "unknown";
+    }
+}
+
 TransformationResult ExtrinsicReflectorBasedCalibrator::estimateTransformation()
 {
   TransformationResult transformation_result;
@@ -1438,76 +1453,80 @@ TransformationResult ExtrinsicReflectorBasedCalibrator::estimateTransformation()
     initial_radar_to_lidar_eigen_, initial_radar_optimization_to_radar_eigen_,
     radar_optimization_to_lidar_eigen_);
 
-  if (transformation_type_ == TransformationType::yaw_only_rotation_2d) {
+  if (transformation_type_ == TransformationType::svd_2d || transformation_type_ == TransformationType::yaw_only_rotation_2d) {
+    // yaw only rotation
     auto [delta_cos, delta_sin] = get2DRotationDelta(converged_tracks_, false);
     estimator.set2DRotationDelta(delta_cos, delta_sin);
     estimator.estimateYawOnlyTransformation();
-    transformation_result.calibrated_radar_to_lidar_transformation = estimator.getTransformation();
+    transformation_result.calibrated_radar_to_lidar_transformations[TransformationType::yaw_only_rotation_2d] = estimator.getTransformation();
     RCLCPP_INFO_STREAM(
       this->get_logger(), "Initial radar->lidar transform:\n"
                             << initial_radar_to_lidar_eigen_.matrix());
     RCLCPP_INFO_STREAM(
       this->get_logger(),
       "Pure rotation calibration radar->lidar transform:\n"
-        << transformation_result.calibrated_radar_to_lidar_transformation.matrix());
-  } else if (transformation_type_ == TransformationType::svd_2d) {
+        << transformation_result.calibrated_radar_to_lidar_transformations[TransformationType::yaw_only_rotation_2d].matrix());
+
+    // svd 2d transformation
     std::tie(transformation_result.lidar_points_ocs, transformation_result.radar_points_rcs) =
       getPointsSet();
     estimator.setPoints(
       transformation_result.lidar_points_ocs, transformation_result.radar_points_rcs);
     estimator.estimateSVDTransformation(transformation_type_);
-    transformation_result.calibrated_radar_to_lidar_transformation = estimator.getTransformation();
+    transformation_result.calibrated_radar_to_lidar_transformations[TransformationType::svd_2d] = estimator.getTransformation();
     RCLCPP_INFO_STREAM(
       this->get_logger(), "Initial radar->lidar transform:\n"
                             << initial_radar_to_lidar_eigen_.matrix());
     RCLCPP_INFO_STREAM(
       this->get_logger(),
-      "2D calibration radar->lidar transform:\n"
-        << transformation_result.calibrated_radar_to_lidar_transformation.matrix());
-  } else if (
-    transformation_type_ == TransformationType::svd_3d ||
-    transformation_type_ == TransformationType::zero_roll_3d) {
+      "Yaw only 2D calibration radar->lidar transform:\n"
+        << transformation_result.calibrated_radar_to_lidar_transformations[TransformationType::svd_2d].matrix());
+                    
+    RCLCPP_INFO_STREAM(
+      this->get_logger(),
+      "SVD 2D calibration radar->lidar transform:\n"
+        << transformation_result.calibrated_radar_to_lidar_transformations[TransformationType::svd_2d].matrix());
+  } else {
     std::tie(transformation_result.lidar_points_ocs, transformation_result.radar_points_rcs) =
       getPointsSet();
     estimator.setPoints(
       transformation_result.lidar_points_ocs, transformation_result.radar_points_rcs);
 
-    if (transformation_type_ == TransformationType::zero_roll_3d)
-      estimator.estimateZeroRollTransformation();
-    else if (transformation_type_ == TransformationType::svd_3d)
-      estimator.estimateSVDTransformation(transformation_type_);
+    // zero roll 3d transformation
+    estimator.estimateZeroRollTransformation();
+    transformation_result.calibrated_radar_to_lidar_transformations[TransformationType::zero_roll_3d] = estimator.getTransformation();
 
-    transformation_result.calibrated_radar_to_lidar_transformation = estimator.getTransformation();
+    // svd 3d transformation
+    estimator.estimateSVDTransformation(transformation_type_);
+    transformation_result.calibrated_radar_to_lidar_transformations[TransformationType::svd_3d] = estimator.getTransformation();
     RCLCPP_INFO_STREAM(
       this->get_logger(), "Initial radar->lidar transform:\n"
                             << initial_radar_to_lidar_eigen_.matrix());
     RCLCPP_INFO_STREAM(
       this->get_logger(),
-      "3D calibration radar->lidar transform:\n"
-        << transformation_result.calibrated_radar_to_lidar_transformation.matrix());
+      "Roll zero 3D calibration radar->lidar transform:\n"
+        << transformation_result.calibrated_radar_to_lidar_transformations[TransformationType::zero_roll_3d].matrix());
+
+    RCLCPP_INFO_STREAM(
+      this->get_logger(),
+      "SVD 3D calibration radar->lidar transform:\n"
+        << transformation_result.calibrated_radar_to_lidar_transformations[TransformationType::svd_3d].matrix());
   }
 
   return transformation_result;
 }
 
 void ExtrinsicReflectorBasedCalibrator::evaluateTransformation(
-  Eigen::Isometry3d calibrated_radar_to_lidar_transformation)
+  TransformationResult transformation_result)
 {
   // Estimate the pre & post calibration error
   auto [initial_distance_error, initial_yaw_error] =
     computeCalibrationError(initial_radar_to_lidar_eigen_);
-  auto [calibrated_distance_error, calibrated_yaw_error] =
-    computeCalibrationError(calibrated_radar_to_lidar_transformation);
-
   RCLCPP_INFO(
     this->get_logger(),
     "Initial calibration error: detection2detection.distance=%.4fm yaw=%.4f degrees",
     initial_distance_error, initial_yaw_error);
-  RCLCPP_INFO(
-    this->get_logger(),
-    "Final calibration error: detection2detection.distance=%.4fm yaw=%.4f degrees",
-    calibrated_distance_error, calibrated_yaw_error);
-
+    
   auto compute_transformation_difference =
     [](const Eigen::Isometry3d & t1, const Eigen::Isometry3d & t2) -> std::pair<double, double> {
     double translation_difference = (t2.inverse() * t1).translation().norm();
@@ -1517,27 +1536,35 @@ void ExtrinsicReflectorBasedCalibrator::evaluateTransformation(
     return std::make_pair(translation_difference, rotation_difference);
   };
 
-  auto [calibrated_translation_difference, calibrated_rotation_difference] =
-    compute_transformation_difference(
-      initial_radar_to_lidar_eigen_, calibrated_radar_to_lidar_transformation);
+  for (const auto& [type, transformation] : transformation_result.calibrated_radar_to_lidar_transformations) {
+      auto [distance_error, yaw_error] = computeCalibrationError(transformation);
+      output_metrics_.methods[type].calibrated_distance_error = distance_error;
+      output_metrics_.methods[type].calibrated_yaw_error = yaw_error;
 
-  std::unique_lock<std::mutex> lock(mutex_);
-  if (
-    calibrated_translation_difference < parameters_.max_initial_calibration_translation_error &&
-    calibrated_rotation_difference < parameters_.max_initial_calibration_rotation_error) {
-    calibrated_radar_to_lidar_eigen_ = calibrated_radar_to_lidar_transformation;
-    calibration_valid_ = true;
-    calibration_distance_score_ = calibrated_distance_error;
-    calibration_yaw_score_ = calibrated_yaw_error;
-  } else {
-    RCLCPP_WARN(
-      this->get_logger(),
-      "The calibrated poses differ considerably with the initial calibration. This may be either a "
-      "fault of the algorithm or a bad calibration initialization");
+      if (type == transformation_type_) {
+        auto [calibrated_translation_difference, calibrated_rotation_difference] =
+        compute_transformation_difference(initial_radar_to_lidar_eigen_, transformation);
+        std::unique_lock<std::mutex> lock(mutex_);
+        if (calibrated_translation_difference < parameters_.max_initial_calibration_translation_error &&
+            calibrated_rotation_difference < parameters_.max_initial_calibration_rotation_error) {
+            calibrated_radar_to_lidar_eigen_ = transformation;
+            calibration_valid_ = true;
+            calibration_distance_score_ = distance_error;
+            calibration_yaw_score_ = yaw_error;
+        } else {
+            RCLCPP_WARN(
+                this->get_logger(),
+                "The calibrated poses differ considerably with the initial calibration. This may be either a "
+                "fault of the algorithm or a bad calibration initialization");
+        }
+      }
+      // Log for all types
+      RCLCPP_INFO(
+          this->get_logger(),
+          "Type: %s, distance error: %.4fm, yaw error: %.4f degrees",
+          toString(type).c_str(), distance_error, yaw_error);
   }
-  output_metrics_.push_back(static_cast<float>(converged_tracks_.size()));
-  output_metrics_.push_back(static_cast<float>(calibrated_distance_error));
-  output_metrics_.push_back(static_cast<float>(calibrated_yaw_error));
+  output_metrics_.num_of_converged_tracks = converged_tracks_.size();
 }
 
 void ExtrinsicReflectorBasedCalibrator::findCombinations(
@@ -1587,91 +1614,117 @@ void ExtrinsicReflectorBasedCalibrator::selectCombinations(
 }
 
 void ExtrinsicReflectorBasedCalibrator::evaluateCombinations(
-  std::vector<std::vector<std::size_t>> & combinations, std::size_t num_of_samples,
-  TransformationResult transformation_result)
+    std::vector<std::vector<std::size_t>>& combinations, 
+    std::size_t num_of_samples, 
+    TransformationResult transformation_result)
 {
-  TransformationEstimator crossval_estimator(
-    initial_radar_to_lidar_eigen_, initial_radar_optimization_to_radar_eigen_,
-    radar_optimization_to_lidar_eigen_);
+    // Initialize cross-validation estimator
+    TransformationEstimator crossval_estimator(
+        initial_radar_to_lidar_eigen_, initial_radar_optimization_to_radar_eigen_,
+        radar_optimization_to_lidar_eigen_);
 
-  pcl::PointCloud<common_types::PointType>::Ptr crossval_lidar_points_ocs(
-    new pcl::PointCloud<common_types::PointType>);
-  pcl::PointCloud<common_types::PointType>::Ptr crossval_radar_points_rcs(
-    new pcl::PointCloud<common_types::PointType>);
-  std::vector<Track> crossval_converged_tracks_;
-  crossval_lidar_points_ocs->reserve(num_of_samples);
-  crossval_radar_points_rcs->reserve(num_of_samples);
-  crossval_converged_tracks_.reserve(num_of_samples);
+    // Prepare containers for cross-validation
+    pcl::PointCloud<common_types::PointType>::Ptr crossval_lidar_points_ocs(
+        new pcl::PointCloud<common_types::PointType>);
+    pcl::PointCloud<common_types::PointType>::Ptr crossval_radar_points_rcs(
+        new pcl::PointCloud<common_types::PointType>);
+    std::vector<Track> crossval_converged_tracks_;
+    crossval_lidar_points_ocs->reserve(num_of_samples);
+    crossval_radar_points_rcs->reserve(num_of_samples);
+    crossval_converged_tracks_.reserve(num_of_samples);
 
-  double total_crossval_calibrated_distance_error = 0.0;
-  double total_crossval_calibrated_yaw_error = 0.0;
-  std::vector<double> crossval_calibrated_distance_error_vector;
-  std::vector<double> crossval_calibrated_yaw_error_vector;
+    // Containers to store results for each transformation type
+    std::unordered_map<TransformationType, std::vector<double>> distance_error_vectors;
+    std::unordered_map<TransformationType, std::vector<double>> yaw_error_vectors;
+    std::unordered_map<TransformationType, double> total_distance_errors;
+    std::unordered_map<TransformationType, double> total_yaw_errors;
 
-  for (const auto & combination : combinations) {
-    if (transformation_type_ == TransformationType::yaw_only_rotation_2d) {
-      crossval_converged_tracks_.clear();
-
-      for (std::size_t i = 0; i < combination.size(); i++) {
-        crossval_converged_tracks_.push_back(converged_tracks_[i]);
-      }
-      auto [delta_cos, delta_sin] = get2DRotationDelta(crossval_converged_tracks_, true);
-
-      crossval_estimator.set2DRotationDelta(delta_cos, delta_sin);
-      crossval_estimator.estimateYawOnlyTransformation();
-    } else {
-      crossval_lidar_points_ocs->clear();
-      crossval_radar_points_rcs->clear();
-
-      // calculate the transformation.
-      for (std::size_t i = 0; i < combination.size(); i++) {
-        crossval_lidar_points_ocs->emplace_back(
-          transformation_result.lidar_points_ocs->points[combination[i]]);
-        crossval_radar_points_rcs->emplace_back(
-          transformation_result.radar_points_rcs->points[combination[i]]);
-      }
-      crossval_estimator.setPoints(crossval_lidar_points_ocs, crossval_radar_points_rcs);
-      if (transformation_type_ == TransformationType::zero_roll_3d)
-        crossval_estimator.estimateZeroRollTransformation();
-      else
-        crossval_estimator.estimateSVDTransformation(transformation_type_);
+    // Initialize metrics containers for all transformation types
+    for (const auto& [type, _] : transformation_result.calibrated_radar_to_lidar_transformations) {
+        distance_error_vectors[type] = {};
+        yaw_error_vectors[type] = {};
+        total_distance_errors[type] = 0.0;
+        total_yaw_errors[type] = 0.0;
     }
 
-    Eigen::Isometry3d crossval_calibrated_radar_to_lidar_transformation =
-      crossval_estimator.getTransformation();
-    // calculate the error.
-    auto [crossval_calibrated_distance_error, crossval_calibrated_yaw_error] =
-      computeCalibrationError(crossval_calibrated_radar_to_lidar_transformation);
+    for (const auto& combination : combinations) {
+        // Prepare the cross-validation data for the current combination
+        crossval_lidar_points_ocs->clear();
+        crossval_radar_points_rcs->clear();
+        crossval_converged_tracks_.clear();
 
-    total_crossval_calibrated_distance_error += crossval_calibrated_distance_error;
-    total_crossval_calibrated_yaw_error += crossval_calibrated_yaw_error;
-    crossval_calibrated_distance_error_vector.push_back(crossval_calibrated_distance_error);
-    crossval_calibrated_yaw_error_vector.push_back(crossval_calibrated_yaw_error);
-  }
+        for (std::size_t i : combination) {
+            crossval_lidar_points_ocs->emplace_back(
+                transformation_result.lidar_points_ocs->points[i]);
+            crossval_radar_points_rcs->emplace_back(
+                transformation_result.radar_points_rcs->points[i]);
+            crossval_converged_tracks_.push_back(converged_tracks_[i]);
+        }
 
-  auto calculate_std = [](std::vector<double> & data, double mean) -> double {
-    double sum = 0.0;
-    for (std::size_t i = 0; i < data.size(); i++) {
-      sum += (data[i] - mean) * (data[i] - mean);
+        // Estimate transformations for each type
+        for (const auto& [type, _] : transformation_result.calibrated_radar_to_lidar_transformations) {
+            Eigen::Isometry3d calibrated_transformation;
+
+            if (type == TransformationType::yaw_only_rotation_2d) {
+                auto [delta_cos, delta_sin] = get2DRotationDelta(crossval_converged_tracks_, true);
+                crossval_estimator.set2DRotationDelta(delta_cos, delta_sin);
+                crossval_estimator.estimateYawOnlyTransformation();
+                calibrated_transformation = crossval_estimator.getTransformation();
+            } else if (type == TransformationType::svd_2d) {
+                crossval_estimator.setPoints(crossval_lidar_points_ocs, crossval_radar_points_rcs);
+                crossval_estimator.estimateSVDTransformation(type);
+                calibrated_transformation = crossval_estimator.getTransformation();
+            } else if (type == TransformationType::zero_roll_3d) {
+                crossval_estimator.setPoints(crossval_lidar_points_ocs, crossval_radar_points_rcs);
+                crossval_estimator.estimateZeroRollTransformation();
+                calibrated_transformation = crossval_estimator.getTransformation();
+            } else if (type == TransformationType::svd_3d) {
+                crossval_estimator.setPoints(crossval_lidar_points_ocs, crossval_radar_points_rcs);
+                crossval_estimator.estimateSVDTransformation(type);
+                calibrated_transformation = crossval_estimator.getTransformation();
+            }
+            
+            // Compute errors for the transformation
+            auto [distance_error, yaw_error] = computeCalibrationError(calibrated_transformation);
+            total_distance_errors[type] += distance_error;
+            total_yaw_errors[type] += yaw_error;
+            distance_error_vectors[type].push_back(distance_error);
+            yaw_error_vectors[type].push_back(yaw_error);
+        }
     }
-    double variance = sum / data.size();
-    return std::sqrt(variance);
-  };
 
-  double avg_crossval_calibrated_distance_error =
-    total_crossval_calibrated_distance_error / combinations.size();
-  double avg_crossval_calibrated_yaw_error =
-    total_crossval_calibrated_yaw_error / combinations.size();
-  output_metrics_.push_back(static_cast<float>(num_of_samples));
-  output_metrics_.push_back(static_cast<float>(avg_crossval_calibrated_distance_error));
-  output_metrics_.push_back(static_cast<float>(avg_crossval_calibrated_yaw_error));
+    // Calculate average and standard deviation for each transformation type
+    auto calculate_std = [](const std::vector<double>& data, double mean) -> double {
+        double sum = 0.0;
+        for (double value : data) {
+            sum += (value - mean) * (value - mean);
+        }
+        double variance = sum / data.size();
+        return std::sqrt(variance);
+    };
 
-  double std_crossval_calibrated_distance_error = calculate_std(
-    crossval_calibrated_distance_error_vector, avg_crossval_calibrated_distance_error);
-  double std_crossval_calibrated_yaw_error =
-    calculate_std(crossval_calibrated_yaw_error_vector, avg_crossval_calibrated_yaw_error);
-  output_metrics_.push_back(static_cast<float>(std_crossval_calibrated_distance_error));
-  output_metrics_.push_back(static_cast<float>(std_crossval_calibrated_yaw_error));
+    for (const auto& [type, errors] : distance_error_vectors) {
+        double avg_distance_error = total_distance_errors[type] / combinations.size();
+        double avg_yaw_error = total_yaw_errors[type] / combinations.size();
+        double std_distance_error = calculate_std(errors, avg_distance_error);
+        double std_yaw_error = calculate_std(yaw_error_vectors[type], avg_yaw_error);
+
+        // Log results
+        RCLCPP_INFO(
+            this->get_logger(),
+            "Type: %s, Avg Distance Error: %.4fm, Avg Yaw Error: %.4f degrees, "
+            "Std Distance Error: %.4fm, Std Yaw Error: %.4f degrees",
+            toString(type).c_str(), avg_distance_error, avg_yaw_error, std_distance_error, std_yaw_error);
+
+        // Store in output metrics
+        output_metrics_.methods[type].avg_crossval_calibrated_distance_error.push_back(avg_distance_error);
+        output_metrics_.methods[type].avg_crossval_calibrated_yaw_error.push_back(avg_yaw_error);
+        output_metrics_.methods[type].std_crossval_calibrated_distance_error.push_back(std_distance_error);
+        output_metrics_.methods[type].std_crossval_calibrated_yaw_error.push_back(std_yaw_error);
+    }
+
+    // Log number of samples
+    output_metrics_.num_of_samples.push_back(num_of_samples);
 }
 
 void ExtrinsicReflectorBasedCalibrator::crossValEvaluation(
@@ -1692,27 +1745,40 @@ void ExtrinsicReflectorBasedCalibrator::crossValEvaluation(
 
 void ExtrinsicReflectorBasedCalibrator::publishMetrics()
 {
-  // The final format of the output metrics is
-  // num of reflectors,  calibration_distance_error, calibration_yaw_error,
-  // sample, avg_crossval_dis_error, avg_crossval_yaw_error, std_crossval_dis_error,
-  // std_crossval_yaw_error. sample, ....
-  std_msgs::msg::Float32MultiArray calibration_metrics_msg = std_msgs::msg::Float32MultiArray();
-  calibration_metrics_msg.data = output_metrics_;
-  metrics_pub_->publish(calibration_metrics_msg);
+    // Create the message
+    auto msg = tier4_calibration_msgs::msg::CalibrationMetrics();
+    msg.num_of_converged_tracks = output_metrics_.num_of_converged_tracks;
+    msg.num_of_samples = output_metrics_.num_of_samples;
+    msg.detections = output_metrics_.detections;
+
+    // Loop through methods to populate metrics dynamically
+    for (const auto& [type, metrics] : output_metrics_.methods) {
+        tier4_calibration_msgs::msg::MethodMetrics method_msg;
+        method_msg.method_name = toString(type); // Use a function to get the string representation
+        method_msg.calibrated_distance_error = metrics.calibrated_distance_error;
+        method_msg.calibrated_yaw_error = metrics.calibrated_yaw_error;
+        method_msg.avg_crossval_calibrated_distance_error = metrics.avg_crossval_calibrated_distance_error;
+        method_msg.avg_crossval_calibrated_yaw_error = metrics.avg_crossval_calibrated_yaw_error;
+        method_msg.std_crossval_calibrated_distance_error = metrics.std_crossval_calibrated_distance_error;
+        method_msg.std_crossval_calibrated_yaw_error = metrics.std_crossval_calibrated_yaw_error;
+
+        // Add the method-specific metrics to the message
+        msg.method_metrics.push_back(method_msg);
+    }
+
+    // Publish the message
+    metrics_pub_->publish(msg);
 }
 
 void ExtrinsicReflectorBasedCalibrator::calibrateSensors()
 {
+  output_metrics_.clear();
   if (converged_tracks_.size() == 0) {
-    std_msgs::msg::Float32MultiArray calibration_metrics_msg = std_msgs::msg::Float32MultiArray();
-    calibration_metrics_msg.data = {0, 0, 0, 0, 0};
-    metrics_pub_->publish(calibration_metrics_msg);
+    publishMetrics();
     return;
   }
-  
-  output_metrics_.clear();
   auto transformation_result = estimateTransformation();
-  evaluateTransformation(transformation_result.calibrated_radar_to_lidar_transformation);
+  evaluateTransformation(transformation_result);
   crossValEvaluation(transformation_result);
   publishMetrics();
 }
@@ -1954,22 +2020,33 @@ void ExtrinsicReflectorBasedCalibrator::drawCalibrationStatusText()
   // the metrics vector
   constexpr double m_to_cm = 100.0;
 
-  if (converged_tracks_.size() == 0) {
+  if (converged_tracks_.empty()) {
     text_marker.text = " pairs=" + std::to_string(converged_tracks_.size());
-  } else {
-    text_marker.text =
-      " pairs=" + std::to_string(converged_tracks_.size()) +
-      "\n average_distance_error[cm]=" + to_string_with_precision(output_metrics_[1] * m_to_cm) +
-      "\n average_yaw_error[deg]=" + to_string_with_precision(output_metrics_[2]);
+} else {
+    text_marker.text = 
+        " pairs=" + std::to_string(converged_tracks_.size());
 
-    if (converged_tracks_.size() > 3) {
-      text_marker.text +=
-        "\n crossval_distance_error[cm]=" +
-        to_string_with_precision(output_metrics_[output_metrics_.size() - 4] * m_to_cm) +
-        "\n crossval_yaw_error[deg]=" +
-        to_string_with_precision(output_metrics_[output_metrics_.size() - 3]);
+    // Dynamically append metrics for all methods
+    for (const auto& [type, metrics] : output_metrics_.methods) {
+        text_marker.text += 
+            "\n " + toString(type) + ": average_distance_error[cm]=" +
+            to_string_with_precision(metrics.calibrated_distance_error * m_to_cm) +
+            "\n " + toString(type) + ": average_yaw_error[deg]=" +
+            to_string_with_precision(metrics.calibrated_yaw_error);
     }
-  }
+
+    // Add cross-validation metrics if enough tracks are available
+    if (converged_tracks_.size() > 3) {
+        for (const auto& [type, metrics] : output_metrics_.methods) {
+            text_marker.text += 
+                "\n " + toString(type) + ": crossval_distance_error[cm]=" +
+                to_string_with_precision(metrics.avg_crossval_calibrated_distance_error.back() * m_to_cm) +
+                "\n " + toString(type) + ": crossval_yaw_error[deg]=" +
+                to_string_with_precision(metrics.avg_crossval_calibrated_yaw_error.back());
+        }
+    }
+}
+
 
   text_marker.pose.position.x = 1.0;
   text_marker.pose.position.y = 1.0;
@@ -1994,9 +2071,7 @@ geometry_msgs::msg::Point ExtrinsicReflectorBasedCalibrator::eigenToPointMsg(
 
 double ExtrinsicReflectorBasedCalibrator::getDistanceError(Eigen::Vector3d v1, Eigen::Vector3d v2)
 {
-  if (
-    transformation_type_ == TransformationType::yaw_only_rotation_2d ||
-    transformation_type_ == TransformationType::svd_2d) {
+  if (transformation_type_ == TransformationType::svd_2d || transformation_type_ == TransformationType::yaw_only_rotation_2d) {
     v1.z() = 0.0;
     v2.z() = 0.0;
   }

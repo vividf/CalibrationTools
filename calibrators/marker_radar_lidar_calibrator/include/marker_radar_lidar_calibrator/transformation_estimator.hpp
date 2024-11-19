@@ -46,7 +46,7 @@ public:
   void set2DRotationDelta(double delta_cos, double delta_sin);
   void estimateYawOnlyTransformation();
   void estimateSVDTransformation(
-    ExtrinsicReflectorBasedCalibrator::TransformationType transformation_type);
+    TransformationType transformation_type);
   void estimateZeroRollTransformation();
   Eigen::Isometry3d getTransformation();
 

@@ -28,7 +28,9 @@
 #include <sensor_msgs/msg/point_cloud2.hpp>
 #include <std_msgs/msg/float32_multi_array.hpp>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
+#include <tier4_calibration_msgs/msg/detail/calibration_metrics__struct.hpp>
 #include <tier4_calibration_msgs/srv/extrinsic_calibrator.hpp>
+#include <tier4_calibration_msgs/msg/calibration_metrics.hpp>
 #include <visualization_msgs/msg/marker_array.hpp>
 
 #include <pcl/pcl_base.h>
@@ -46,15 +48,73 @@
 #include <tuple>
 #include <utility>
 #include <vector>
+#include <unordered_map>
 
 namespace marker_radar_lidar_calibrator
 {
 
-struct TransformationResult
-{
-  pcl::PointCloud<common_types::PointType>::Ptr lidar_points_ocs;
-  pcl::PointCloud<common_types::PointType>::Ptr radar_points_rcs;
-  Eigen::Isometry3d calibrated_radar_to_lidar_transformation;
+
+enum class TransformationType { svd_2d, yaw_only_rotation_2d, svd_3d, zero_roll_3d };
+
+struct TransformationResult {
+    pcl::PointCloud<common_types::PointType>::Ptr lidar_points_ocs;
+    pcl::PointCloud<common_types::PointType>::Ptr radar_points_rcs;
+    std::unordered_map<TransformationType, Eigen::Isometry3d> calibrated_radar_to_lidar_transformations;
+
+    void initializeTransformations() {
+        calibrated_radar_to_lidar_transformations[TransformationType::svd_2d] = Eigen::Isometry3d::Identity();
+        calibrated_radar_to_lidar_transformations[TransformationType::yaw_only_rotation_2d] = Eigen::Isometry3d::Identity();
+        calibrated_radar_to_lidar_transformations[TransformationType::svd_3d] = Eigen::Isometry3d::Identity();
+        calibrated_radar_to_lidar_transformations[TransformationType::zero_roll_3d] = Eigen::Isometry3d::Identity();
+    }
+
+    void clear() {
+        lidar_points_ocs.reset();
+        radar_points_rcs.reset();
+        calibrated_radar_to_lidar_transformations.clear();
+    }
+};
+
+struct CalibrationErrorMetrics {
+    double calibrated_distance_error = 0;
+    double calibrated_yaw_error = 0;
+    std::vector<double> avg_crossval_calibrated_distance_error;
+    std::vector<double> avg_crossval_calibrated_yaw_error;
+    std::vector<double> std_crossval_calibrated_distance_error;
+    std::vector<double> std_crossval_calibrated_yaw_error;
+
+    void clear() {
+        calibrated_distance_error = 0;
+        calibrated_yaw_error = 0;
+        avg_crossval_calibrated_distance_error.clear();
+        avg_crossval_calibrated_yaw_error.clear();
+        std_crossval_calibrated_distance_error.clear();
+        std_crossval_calibrated_yaw_error.clear();
+    }
+};
+
+struct OutputMetrics {
+    int num_of_converged_tracks = 0;
+    std::vector<int> num_of_samples;
+    std::unordered_map<TransformationType, CalibrationErrorMetrics> methods; 
+    std::vector<geometry_msgs::msg::Point> detections;
+
+    void clear() {
+        num_of_converged_tracks = 0;
+        num_of_samples.clear();
+        for (auto& [type, metrics] : methods) {
+            metrics.clear();
+        }
+        detections.clear();
+    }
+
+    void initializeMethods() {
+        methods.clear();
+        methods[TransformationType::svd_2d] = CalibrationErrorMetrics();
+        methods[TransformationType::yaw_only_rotation_2d] = CalibrationErrorMetrics();
+        methods[TransformationType::svd_3d] = CalibrationErrorMetrics();
+        methods[TransformationType::zero_roll_3d] = CalibrationErrorMetrics();
+    }
 };
 
 struct Track 
@@ -67,7 +127,6 @@ class ExtrinsicReflectorBasedCalibrator : public rclcpp::Node
 {
 public:
   using index_t = std::uint32_t;
-  enum class TransformationType { svd_2d, yaw_only_rotation_2d, svd_3d, zero_roll_3d };
 
   enum class MsgType { radar_tracks, radar_scan, radar_cloud };
 
@@ -152,7 +211,7 @@ protected:
   std::pair<double, double> computeCalibrationError(
     const Eigen::Isometry3d & radar_to_lidar_isometry);
   TransformationResult estimateTransformation();
-  void evaluateTransformation(Eigen::Isometry3d calibrated_radar_to_lidar_transformation);
+  void evaluateTransformation(TransformationResult transformation_result);
   void crossValEvaluation(TransformationResult transformation_result);
   void findCombinations(
     std::size_t n, std::size_t k, std::vector<std::size_t> & curr, std::size_t first_num,
@@ -246,7 +305,7 @@ protected:
   rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr matches_markers_pub_;
   rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr tracking_markers_pub_;
   rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr text_markers_pub_;
-  rclcpp::Publisher<std_msgs::msg::Float32MultiArray>::SharedPtr metrics_pub_;
+  rclcpp::Publisher<tier4_calibration_msgs::msg::CalibrationMetrics>::SharedPtr metrics_pub_;
 
   rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr lidar_sub_;
   rclcpp::Subscription<radar_msgs::msg::RadarTracks>::SharedPtr radar_tracks_sub_;
@@ -310,7 +369,7 @@ protected:
   std::vector<Track> converged_tracks_;
 
   // Metrics
-  std::vector<float> output_metrics_;
+  OutputMetrics output_metrics_;
 
   MsgType msg_type_;
   TransformationType transformation_type_;
