@@ -30,6 +30,7 @@
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 #include <tier4_calibration_msgs/msg/detail/calibration_metrics__struct.hpp>
 #include <tier4_calibration_msgs/srv/extrinsic_calibrator.hpp>
+#include <tier4_calibration_msgs/srv/delete_lidar_radar_pair.hpp>
 #include <tier4_calibration_msgs/msg/calibration_metrics.hpp>
 #include <visualization_msgs/msg/marker_array.hpp>
 
@@ -119,8 +120,11 @@ struct OutputMetrics {
 
 struct Track 
 {
+  int id;
   Eigen::Vector3d lidar_estimation;
   Eigen::Vector3d radar_estimation;
+  double distance_error;
+  double yaw_error;
 };
 
 class ExtrinsicReflectorBasedCalibrator : public rclcpp::Node
@@ -154,8 +158,8 @@ protected:
     const std::shared_ptr<std_srvs::srv::Empty::Response> response);
 
   void deleteTrackRequestCallback(
-    const std::shared_ptr<std_srvs::srv::Empty::Request> request,
-    const std::shared_ptr<std_srvs::srv::Empty::Response> response);
+    const std::shared_ptr<tier4_calibration_msgs::srv::DeleteLidarRadarPair::Request> request,
+    const std::shared_ptr<tier4_calibration_msgs::srv::DeleteLidarRadarPair::Response> response);
 
   void lidarCallback(const sensor_msgs::msg::PointCloud2::SharedPtr msg);
 
@@ -236,6 +240,9 @@ protected:
   double getDistanceError(const Eigen::Vector3d v1, const Eigen::Vector3d v2);
   double getYawError(const Eigen::Vector3d v1, const Eigen::Vector3d v2);
   geometry_msgs::msg::Point eigenToPoint(const Eigen::Vector3d& eigen_vector);
+  void updateTrackIds();
+  std::string toStringWithPrecision(const float value, const int n);
+
 
   rcl_interfaces::msg::SetParametersResult paramCallback(
     const std::vector<rclcpp::Parameter> & parameters);
@@ -318,7 +325,7 @@ protected:
   rclcpp::Service<std_srvs::srv::Empty>::SharedPtr background_model_service_server_;
   rclcpp::Service<std_srvs::srv::Empty>::SharedPtr tracking_service_server_;
   rclcpp::Service<std_srvs::srv::Empty>::SharedPtr send_calibration_service_server_;
-  rclcpp::Service<std_srvs::srv::Empty>::SharedPtr delete_track_service_server_;
+  rclcpp::Service<tier4_calibration_msgs::srv::DeleteLidarRadarPair>::SharedPtr delete_track_service_server_;
 
   // Threading, sync, and result
   std::mutex mutex_;
@@ -374,7 +381,7 @@ protected:
 
   MsgType msg_type_;
   TransformationType transformation_type_;
-  static constexpr int MARKER_SIZE_PER_TRACK = 8;
+  static constexpr int MARKER_SIZE_PER_TRACK = 9;
 };
 
 }  // namespace marker_radar_lidar_calibrator

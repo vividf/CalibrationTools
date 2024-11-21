@@ -18,6 +18,8 @@ from PySide2.QtWidgets import QMainWindow
 from PySide2.QtWidgets import QPushButton
 from PySide2.QtWidgets import QVBoxLayout
 from PySide2.QtWidgets import QWidget
+from PySide2.QtWidgets import QLineEdit
+from PySide2.QtWidgets import QLabel
 
 
 class CalibratorUI(QMainWindow):
@@ -75,7 +77,14 @@ class CalibratorUI(QMainWindow):
         self.add_lidar_radar_pair_button.clicked.connect(self.add_lidar_radar_pair_button_callback)
         self.layout.addWidget(self.add_lidar_radar_pair_button)
 
-        self.delete_lidar_radar_pair_button = QPushButton("Delete previous lidar-radar pair")
+        self.delete_pair_label = QLabel("Enter ID to delete pair:")
+        self.layout.addWidget(self.delete_pair_label)
+        self.delete_pair_input = QLineEdit()
+        self.delete_pair_input.setPlaceholderText("Enter pair ID")
+        self.delete_pair_input.setText("-1")  # Set the default value as -1
+        self.layout.addWidget(self.delete_pair_input)
+
+        self.delete_lidar_radar_pair_button = QPushButton("Delete lidar-radar pair")
         self.delete_lidar_radar_pair_button.setEnabled(False)
         self.delete_lidar_radar_pair_button.clicked.connect(
             self.delete_lidar_radar_pair_button_callback
@@ -151,8 +160,15 @@ class CalibratorUI(QMainWindow):
         self.check_status()
 
     def delete_lidar_radar_pair_button_callback(self):
+        pair_id_text = self.delete_pair_input.text()
+        try:
+            pair_id = int(pair_id_text)  # Convert input to integer
+        except ValueError:
+            print("Please enter a valid numeric pair ID.")
+            return
+
         self.pending_service = True
-        self.ros_interface.delete_lidar_radar_pair()
+        self.ros_interface.delete_lidar_radar_pair(pair_id)  # Pass the integer pair_id
         self.check_status()
 
     def send_calibration_button_callback(self):

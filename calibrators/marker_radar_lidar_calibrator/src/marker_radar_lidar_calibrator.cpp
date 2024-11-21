@@ -364,7 +364,7 @@ void ExtrinsicReflectorBasedCalibrator::timerCallback()
   }
 
   if (converged_tracks_.size() > 0 && !delete_track_service_server_) {
-    delete_track_service_server_ = this->create_service<std_srvs::srv::Empty>(
+    delete_track_service_server_ = this->create_service<tier4_calibration_msgs::srv::DeleteLidarRadarPair>(
       "delete_lidar_radar_pair",
       std::bind(
         &ExtrinsicReflectorBasedCalibrator::deleteTrackRequestCallback, this, std::placeholders::_1,
@@ -425,24 +425,43 @@ void ExtrinsicReflectorBasedCalibrator::trackingRequestCallback(
 }
 
 void ExtrinsicReflectorBasedCalibrator::deleteTrackRequestCallback(
-  [[maybe_unused]] const std::shared_ptr<std_srvs::srv::Empty::Request> request,
-  [[maybe_unused]] const std::shared_ptr<std_srvs::srv::Empty::Response> response)
+  const std::shared_ptr<tier4_calibration_msgs::srv::DeleteLidarRadarPair::Request> request,
+  const std::shared_ptr<tier4_calibration_msgs::srv::DeleteLidarRadarPair::Response> response)
 {
   using std::chrono_literals::operator""s;
 
-  if (converged_tracks_.size() > 0) {
-    converged_tracks_.pop_back();
+  int track_id_to_delete = (request->pair_id == -1) ? static_cast<int>(converged_tracks_.size())
+                                                   : request->pair_id;
+
+  // Search for the track with the specified ID
+  auto it = std::find_if(
+    converged_tracks_.begin(), converged_tracks_.end(),
+    [&track_id_to_delete](const Track& track) { return track.id == track_id_to_delete; });
+
+  if (it != converged_tracks_.end()) {
+    // Track found; delete it
+    deleteTrackMarkers();
+    converged_tracks_.erase(it);
+    updateTrackIds();
     calibrateSensors();
     visualizeTrackMarkers();
-    deleteTrackMarkers();
     drawCalibrationStatusText();
+
+    response->success = true;
+    response->message = "Track successfully deleted.";
     RCLCPP_INFO(
-      this->get_logger(), "The last track was successfully deleted. Remaining converged tracks: %d",
-      static_cast<int>(converged_tracks_.size()));
-    // sleep for 1s for the plotter node to finish plotting.
+      this->get_logger(), "Track with ID '%d' was successfully deleted. Remaining converged tracks: %d",
+      track_id_to_delete, static_cast<int>(converged_tracks_.size()));
+
+    // Sleep for 1 second for the plotter node to finish plotting
     rclcpp::sleep_for(1s);
   } else {
-    RCLCPP_WARN(this->get_logger(), "There are no converged tracks available");
+    // Track not found
+    response->success = false;
+    response->message = "Track ID not found.";
+    RCLCPP_WARN(
+      this->get_logger(), "Track with ID '%d' not found. No tracks were deleted.",
+      track_id_to_delete);
   }
 }
 
@@ -1270,14 +1289,14 @@ bool ExtrinsicReflectorBasedCalibrator::trackMatches(
           });
 
         if (is_tracking_same_match) {
-          track_group.emplace_back(Track{match.first, match.second});
+          track_group.emplace_back(Track{track_group[0].id, match.first, match.second, 0, 0});
           added_to_existing_group = true;
           break;
         }
       }
 
       if (!added_to_existing_group) {
-        converging_tracks_.emplace_back(std::vector<Track>{Track{match.first, match.second}});
+        converging_tracks_.emplace_back(std::vector<Track>{Track{static_cast<int>(converged_tracks_.size()), match.first, match.second, 0, 0}});
       }
     }
     return false;
@@ -1304,6 +1323,8 @@ bool ExtrinsicReflectorBasedCalibrator::trackMatches(
     converged_tracks_.push_back(*max_distance_track);
   }
 
+  updateTrackIds();
+
   RCLCPP_INFO(
     this->get_logger(), "counting_matches number= %lu", converging_tracks_.size());
   RCLCPP_INFO(
@@ -1326,20 +1347,18 @@ std::tuple<double, double> ExtrinsicReflectorBasedCalibrator::get2DRotationDelta
   double delta_cos_sum = 0.0;
   double delta_sin_sum = 0.0;
 
-  for (std::size_t track_index = 0; track_index < converged_tracks.size(); track_index++) {
-    auto track = converged_tracks[track_index];
+  for (const auto & track: converged_tracks) {
     // lidar coordinates
-    const auto & [lidar_estimation, radar_estimation_rcs] = track;
     // to radar coordinates
-    const auto & lidar_transformed_estimation = initial_radar_to_lidar_eigen_ * lidar_estimation;
+    const auto & lidar_transformed_estimation = initial_radar_to_lidar_eigen_ * track.lidar_estimation;
 
     const double lidar_transformed_norm = lidar_transformed_estimation.norm();
     const double lidar_transformed_cos = lidar_transformed_estimation.x() / lidar_transformed_norm;
     const double lidar_transformed_sin = lidar_transformed_estimation.y() / lidar_transformed_norm;
 
-    const double radar_norm = radar_estimation_rcs.norm();
-    const double radar_cos = radar_estimation_rcs.x() / radar_norm;
-    const double radar_sin = radar_estimation_rcs.y() / radar_norm;
+    const double radar_norm = track.radar_estimation.norm();
+    const double radar_cos = track.radar_estimation.x() / radar_norm;
+    const double radar_sin = track.radar_estimation.y() / radar_norm;
 
     // sin(a-b) = sin(a)*cos(b) - cos(a)*sin(b)
     // cos(a-b) = cos(a)*cos(b) + sin(a)*sin(b)
@@ -1351,13 +1370,13 @@ std::tuple<double, double> ExtrinsicReflectorBasedCalibrator::get2DRotationDelta
 
     if (!is_crossval) {
       // logging
-      RCLCPP_INFO_STREAM(this->get_logger(), "lidar_estimation:\n" << lidar_estimation.matrix());
+      RCLCPP_INFO_STREAM(this->get_logger(), "lidar_estimation:\n" << track.lidar_estimation.matrix());
       RCLCPP_INFO_STREAM(
         this->get_logger(), "lidar_transformed_estimation:\n"
                               << lidar_transformed_estimation.matrix());
       RCLCPP_INFO_STREAM(
-        this->get_logger(), "radar_estimation_rcs:\n"
-                              << radar_estimation_rcs.matrix());
+        this->get_logger(), "radar_estimation:\n"
+                              << track.radar_estimation.matrix());
     }
   }
   double delta_cos = delta_cos_sum / converged_tracks.size();
@@ -1415,20 +1434,25 @@ ExtrinsicReflectorBasedCalibrator::getPointsSet()
 std::pair<double, double> ExtrinsicReflectorBasedCalibrator::computeCalibrationError(
   const Eigen::Isometry3d & radar_to_lidar_isometry)
 {
-  double distance_error = 0.0;
-  double yaw_error = 0.0;
+  double total_distance_error = 0.0;
+  double total_yaw_error = 0.0;
 
-  for (auto & [lidar_estimation, radar_estimation] : converged_tracks_) {
-    auto lidar_estimation_transformed = radar_to_lidar_isometry * lidar_estimation;
+  for (auto & track : converged_tracks_) {
+    auto lidar_estimation_transformed = radar_to_lidar_isometry * track.lidar_estimation;
 
-    distance_error += getDistanceError(lidar_estimation_transformed, radar_estimation);
-    yaw_error += getYawError(lidar_estimation_transformed, radar_estimation);
+    auto distance_error = getDistanceError(lidar_estimation_transformed, track.radar_estimation);
+    auto yaw_error = getYawError(lidar_estimation_transformed, track.radar_estimation);
+
+    track.distance_error = distance_error;
+    track.yaw_error = yaw_error;
+    total_distance_error += distance_error;
+    total_yaw_error += yaw_error;
   }
 
-  distance_error /= static_cast<double>(converged_tracks_.size());
-  yaw_error *= 180.0 / (M_PI * static_cast<double>(converged_tracks_.size()));
+  total_distance_error /= static_cast<double>(converged_tracks_.size());
+  total_yaw_error *= 180.0 / (M_PI * static_cast<double>(converged_tracks_.size()));
 
-  return std::make_pair(distance_error, yaw_error);
+  return std::make_pair(total_distance_error, total_yaw_error);
 }
 
 std::string toString(TransformationType type) {
@@ -1893,7 +1917,7 @@ void ExtrinsicReflectorBasedCalibrator::visualizeTrackMarkers()
 {
   auto add_track_markers = [&](
                              const Eigen::Vector3d & lidar_estimation,
-                             const Eigen::Vector3d & radar_estimation_transformed,
+                             const Eigen::Vector3d & radar_estimation_transformed, Track track,
                              const std::string ns, const std_msgs::msg::ColorRGBA & color,
                              std::vector<visualization_msgs::msg::Marker> & markers) {
     visualization_msgs::msg::Marker marker;
@@ -1943,6 +1967,22 @@ void ExtrinsicReflectorBasedCalibrator::visualizeTrackMarkers()
     marker.color.b = 1.0;
     marker.points.clear();
     markers.push_back(marker);
+
+    if(ns == "calibrated") {
+      marker.id = markers.size();
+      marker.type = visualization_msgs::msg::Marker::TEXT_VIEW_FACING;
+      marker.pose.position = eigenToPointMsg(lidar_estimation + Eigen::Vector3d(0, 0, 1));
+      marker.scale.z = 0.3;
+      marker.color.r = 1.0;
+      marker.color.g = 0.0;
+      marker.color.b = 0.0;
+      marker.color.a = 1.0;
+      marker.text = "\n ID:" + std::to_string(track.id)  + "\n dist_err" + toStringWithPrecision(track.distance_error, 2) + "\n yaw_err=" + toStringWithPrecision(track.yaw_error, 2);
+      markers.push_back(marker); 
+    }
+
+
+
   };
 
   // Visualization
@@ -1955,19 +1995,17 @@ void ExtrinsicReflectorBasedCalibrator::visualizeTrackMarkers()
   calibrated_color.g = 1.0;
   calibrated_color.a = 1.0;
 
-  for (std::size_t track_index = 0; track_index < converged_tracks_.size(); track_index++) {
-    auto [lidar_estimation, radar_estimation] = converged_tracks_[track_index];
-
+  for (const auto & track : converged_tracks_) {
     const auto initial_radar_estimation_transformed =
-      initial_radar_to_lidar_eigen_.inverse() * radar_estimation;
+      initial_radar_to_lidar_eigen_.inverse() * track.radar_estimation;
     const auto calibrated_radar_estimation_transformed =
-      calibrated_radar_to_lidar_eigen_.inverse() * radar_estimation;
+      calibrated_radar_to_lidar_eigen_.inverse() * track.radar_estimation;
 
     add_track_markers(
-      lidar_estimation, initial_radar_estimation_transformed, "initial", initial_color,
+      track.lidar_estimation, initial_radar_estimation_transformed, track, "initial", initial_color,
       tracking_marker_array.markers);
     add_track_markers(
-      lidar_estimation, calibrated_radar_estimation_transformed, "calibrated", calibrated_color,
+      track.lidar_estimation, calibrated_radar_estimation_transformed, track, "calibrated", calibrated_color,
       tracking_marker_array.markers);
   }
 
@@ -1978,36 +2016,24 @@ void ExtrinsicReflectorBasedCalibrator::deleteTrackMarkers()
 {
   visualization_msgs::msg::MarkerArray tracking_marker_array;
   visualization_msgs::msg::Marker marker;
-  auto deleted_id_start = converged_tracks_.size() * MARKER_SIZE_PER_TRACK;
-  // delete the latest initial marker
-  std::string ns = "initial";
-  for (int i = 0; i < 4; i++) {
-    marker.id = deleted_id_start + i;
-    marker.ns = ns;
+
+  for (size_t i = 0; i < converged_tracks_.size() * MARKER_SIZE_PER_TRACK; i++) {
+    marker.id = i;
+    marker.ns = "initial";
     marker.action = visualization_msgs::msg::Marker::DELETE;
     tracking_marker_array.markers.push_back(marker);
-  }
-  // delete the latest calibrated marker
-  ns = "calibrated";
-  for (int i = 4; i < 8; i++) {
-    marker.id = deleted_id_start + i;
-    marker.ns = ns;
+
+    marker.ns = "calibrated";
     marker.action = visualization_msgs::msg::Marker::DELETE;
     tracking_marker_array.markers.push_back(marker);
   }
 
+  // Publish the updated marker array to delete specific markers
   tracking_markers_pub_->publish(tracking_marker_array);
 }
 
 void ExtrinsicReflectorBasedCalibrator::drawCalibrationStatusText()
 {
-  auto to_string_with_precision = [](const float value, const int n = 2) -> std::string {
-    std::ostringstream out;
-    out.precision(n);
-    out << std::fixed << value;
-    return out.str();
-  };
-
   visualization_msgs::msg::Marker text_marker;
 
   text_marker.id = 0;
@@ -2035,9 +2061,9 @@ void ExtrinsicReflectorBasedCalibrator::drawCalibrationStatusText()
     for (const auto& [type, metrics] : output_metrics_.methods) {
         text_marker.text += 
             "\n " + toString(type) + ": average_distance_error[cm]=" +
-            to_string_with_precision(metrics.calibrated_distance_error * m_to_cm) +
+            toStringWithPrecision(metrics.calibrated_distance_error * m_to_cm, 2) +
             "\n " + toString(type) + ": average_yaw_error[deg]=" +
-            to_string_with_precision(metrics.calibrated_yaw_error);
+            toStringWithPrecision(metrics.calibrated_yaw_error, 2);
     }
 
     // Add cross-validation metrics if enough tracks are available
@@ -2045,9 +2071,9 @@ void ExtrinsicReflectorBasedCalibrator::drawCalibrationStatusText()
         for (const auto& [type, metrics] : output_metrics_.methods) {
             text_marker.text += 
                 "\n " + toString(type) + ": crossval_distance_error[cm]=" +
-                to_string_with_precision(metrics.avg_crossval_calibrated_distance_error.back() * m_to_cm) +
+                toStringWithPrecision(metrics.avg_crossval_calibrated_distance_error.back() * m_to_cm, 2) +
                 "\n " + toString(type) + ": crossval_yaw_error[deg]=" +
-                to_string_with_precision(metrics.avg_crossval_calibrated_yaw_error.back());
+                toStringWithPrecision(metrics.avg_crossval_calibrated_yaw_error.back(), 2);
         }
     }
 }
@@ -2098,5 +2124,17 @@ geometry_msgs::msg::Point ExtrinsicReflectorBasedCalibrator::eigenToPoint(const 
     return point;
 }
 
+void ExtrinsicReflectorBasedCalibrator::updateTrackIds() {
+    for (size_t i = 0; i < converged_tracks_.size(); ++i) {
+        converged_tracks_[i].id = i + 1; // Reassign IDs starting from 1
+    }
+}
+
+std::string ExtrinsicReflectorBasedCalibrator::toStringWithPrecision(const float value, const int n) {
+    std::ostringstream out;
+    out.precision(n);
+    out << std::fixed << value;
+    return out.str();
+}
 
 }  // namespace marker_radar_lidar_calibrator

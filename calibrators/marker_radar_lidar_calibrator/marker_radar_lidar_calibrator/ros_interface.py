@@ -19,7 +19,7 @@ import threading
 from rclpy.executors import SingleThreadedExecutor
 from rclpy.node import Node
 from std_srvs.srv import Empty
-
+from tier4_calibration_msgs.srv import DeleteLidarRadarPair
 
 class ServiceWrapper:
     def __init__(self):
@@ -56,6 +56,16 @@ class EmptyServiceWrapper(ServiceWrapper):
         req = Empty.Request()
         self.future = self.client.call_async(req)
 
+class DeleteLidarRadarPairServiceWrapper(ServiceWrapper):
+    def __init__(self, node, name):
+        super().__init__()
+        self.client = node.create_client(DeleteLidarRadarPair, name)
+
+    def __call__(self, pair_id):
+        req = DeleteLidarRadarPair.Request()
+        req.pair_id = pair_id  # Set the pair_id in the request
+        self.future = self.client.call_async(req)
+
 
 class RosInterface(Node):
     def __init__(self):
@@ -67,7 +77,7 @@ class RosInterface(Node):
 
         self.extract_background_model_client = EmptyServiceWrapper(self, "extract_background_model")
         self.add_lidar_radar_pair_client = EmptyServiceWrapper(self, "add_lidar_radar_pair")
-        self.delete_lidar_radar_pair_client = EmptyServiceWrapper(self, "delete_lidar_radar_pair")
+        self.delete_lidar_radar_pair_client = DeleteLidarRadarPairServiceWrapper(self, "delete_lidar_radar_pair")
         self.send_calibration_client = EmptyServiceWrapper(self, "send_calibration")
 
         self.client_list = [
@@ -105,8 +115,9 @@ class RosInterface(Node):
     def add_lidar_radar_pair(self):
         self.add_lidar_radar_pair_client()
 
-    def delete_lidar_radar_pair(self):
-        self.delete_lidar_radar_pair_client()
+    def delete_lidar_radar_pair(self, pair_id):
+        print(f"Requesting deletion of lidar-radar pair with ID: {pair_id}")
+        self.delete_lidar_radar_pair_client(pair_id)
 
     def send_calibration(self):
         self.send_calibration_client()

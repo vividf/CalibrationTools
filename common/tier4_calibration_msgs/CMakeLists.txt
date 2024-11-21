@@ -21,6 +21,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/MethodMetrics.msg"
   "msg/Files.msg"
   "srv/Empty.srv"
+  "srv/DeleteLidarRadarPair.srv"
   "srv/FilesSrv.srv"
   "srv/FilesListSrv.srv"
   "srv/CalibrationDatabase.srv"

@@ -6,7 +6,7 @@ import numpy as np
 import rclpy
 from rclpy.node import Node
 from tier4_calibration_msgs.msg import CalibrationMetrics  # Adjust the import for the new message type
-
+import matplotlib.ticker as mticker
 
 class MetricsPlotter:
     def __init__(self):
@@ -22,22 +22,47 @@ class MetricsPlotter:
         self.color_yaw = "C1"          # Solid color for yaw (e.g., fill areas)
 
     def initialize_figure(self, methods):
-        self.fig, self.axes = plt.subplots(
-            nrows=2 * len(methods), ncols=2, figsize=(8, 6 * len(methods))
-        )
-        self.fig.canvas.manager.set_window_title("Metrics plotter")
-        self.subplots = {method: {} for method in methods}
+        """
+        Initialize the figure with subplots for errors (first two rows) and distributions (last row).
+        """
+        
+        num_rows = len(methods) + 1  # 1 row for distributions
+        num_cols = 4
 
+        # Create the figure with the fixed layout
+        self.fig, self.axes = plt.subplots(
+            nrows=num_rows, ncols=num_cols, figsize=(16, 12)
+        )
+        self.fig.canvas.manager.set_window_title("Metrics and Detection Distributions")
+
+        # Flatten axes for easier indexing and assignment
+        self.axes = self.axes.reshape(num_rows, num_cols)
+
+        # Assign subplots for methods
+        self.subplots = {method: {} for method in methods}
         for idx, method in enumerate(methods):
             self.subplots[method] = {
-                "crossval_distance": self.axes[idx * 2, 0],
-                "crossval_yaw": self.axes[idx * 2, 1],
-                "average_distance": self.axes[idx * 2 + 1, 0],
-                "average_yaw": self.axes[idx * 2 + 1, 1],
+                "crossval_distance": self.axes[idx, 0],
+                "crossval_yaw": self.axes[idx, 1],
+                "average_distance": self.axes[idx, 2],
+                "average_yaw": self.axes[idx, 3],
             }
+
+        # Assign subplots for detection distributions
+        self.detection_subplots = {
+            "range": self.axes[len(methods) , 0],
+            "pitch": self.axes[len(methods) , 1],
+            "yaw": self.axes[len(methods) , 2],
+        }
+
+        # Leave the last column empty for a clean layout
+        for ax in self.axes[2, 3:]:
+            ax.axis("off")
 
         plt.tight_layout()
         plt.pause(0.1)
+
+
 
     def initialize_metrics(self, methods):
         for method in methods:
@@ -53,7 +78,6 @@ class MetricsPlotter:
                     "std_crossval_yaw_error_list": [],
                 }
 
-
     def is_delete_operation(self, method, msg_array):
         if method not in self.metrics_data:
             return False  # Skip if the method is not initialized
@@ -61,7 +85,6 @@ class MetricsPlotter:
             self.metrics_data[method]["num_of_reflectors_list"]
             and msg_array[0] < self.metrics_data[method]["num_of_reflectors_list"][-1]
         )
-
 
     def remove_avg_error_from_list(self, method):
         metrics = self.metrics_data[method]
@@ -94,7 +117,6 @@ class MetricsPlotter:
         for ax in self.axes.flat:
             ax.xaxis.set_major_locator(plt.MaxNLocator(integer=True))
 
-
     def update_metrics(self, msg):
         # Extract methods from the incoming message
         methods_in_msg = [method.method_name for method in msg.method_metrics]
@@ -122,6 +144,106 @@ class MetricsPlotter:
                 value * self.m_to_cm for value in method.std_crossval_calibrated_distance_error
             ]
             metrics["std_crossval_yaw_error_list"] = method.std_crossval_calibrated_yaw_error
+
+    def compute_detection_metrics(self, detections):
+        """
+        Compute range, pitch, and yaw distributions from detections.
+        """
+        ranges = []
+        pitches = []
+        yaws = []
+
+        for detection in detections:
+            # Print detection coordinates for debugging
+            print(f"Detection point: x={detection.x}, y={detection.y}, z={detection.z}")
+
+            # Compute range
+            range_ = math.sqrt(detection.x**2 + detection.y**2 + detection.z**2)
+            if range_ == 0:
+                print("Skipping detection with zero range.")
+                continue  # Skip invalid detections
+
+            # Compute pitch angle (clamped to valid range)
+            pitch = math.degrees(math.asin(max(-1.0, min(1.0, detection.z / range_))))
+            pitches.append(pitch)
+
+            # Compute yaw angle
+            yaw = math.degrees(math.atan2(detection.y, detection.x))
+            yaws.append(yaw)
+
+            # Add range
+            ranges.append(range_)
+
+        # Print computed values for debugging
+        print(f"Ranges: {ranges}")
+        print(f"Pitches: {pitches}")
+        print(f"Yaws: {yaws}")
+
+        return ranges, pitches, yaws
+
+
+    def plot_detection_distributions(self, ranges, pitches, yaws):
+        """
+        Plot discrete distributions for range, pitch, and yaw with specified intervals,
+        ensuring integer y-axis ticks.
+        """
+        # Clear previous plots
+        for subplot in self.detection_subplots.values():
+            subplot.clear()
+
+        # Define bin intervals
+        range_bin_width = 5  # Interval of 5 meters
+        pitch_bin_width = 0.2  # Interval of 0.2 degrees
+        yaw_bin_width = 10    # Interval of 3 degrees
+
+        # Create discrete bins
+        range_bins = np.arange(
+            math.floor(min(ranges) / range_bin_width) * range_bin_width,
+            math.ceil(max(ranges) / range_bin_width) * range_bin_width + range_bin_width,
+            range_bin_width,
+        )
+        pitch_bins = np.arange(
+            math.floor(min(pitches) / pitch_bin_width) * pitch_bin_width,
+            math.ceil(max(pitches) / pitch_bin_width) * pitch_bin_width + pitch_bin_width,
+            pitch_bin_width,
+        )
+        yaw_bins = np.arange(
+            math.floor(min(yaws) / yaw_bin_width) * yaw_bin_width,
+            math.ceil(max(yaws) / yaw_bin_width) * yaw_bin_width + yaw_bin_width,
+            yaw_bin_width,
+        )
+
+        # Count occurrences in each bin and cast counts to integers
+        range_counts = np.histogram(ranges, bins=range_bins)[0].astype(int)
+        pitch_counts = np.histogram(pitches, bins=pitch_bins)[0].astype(int)
+        yaw_counts = np.histogram(yaws, bins=yaw_bins)[0].astype(int)
+
+        # Plot range distribution as a bar chart
+        self.detection_subplots["range"].bar(range_bins[:-1], range_counts, color="C2", alpha=0.7, width=range_bin_width * 0.5)
+        self.detection_subplots["range"].set_title("Range Distribution")
+        self.detection_subplots["range"].set_xlabel("Range [m]")
+        self.detection_subplots["range"].set_ylabel("Count")
+        self.detection_subplots["range"].set_xticks(range_bins)
+        self.detection_subplots["range"].yaxis.set_major_locator(mticker.MaxNLocator(integer=True))
+
+        # Plot pitch distribution as a bar chart
+        self.detection_subplots["pitch"].bar(pitch_bins[:-1], pitch_counts, color="C3", alpha=0.7, width=pitch_bin_width * 0.5)
+        self.detection_subplots["pitch"].set_title("Pitch Distribution")
+        self.detection_subplots["pitch"].set_xlabel("Pitch [deg]")
+        self.detection_subplots["pitch"].set_ylabel("Count")
+        self.detection_subplots["pitch"].set_xticks(pitch_bins)
+        self.detection_subplots["pitch"].yaxis.set_major_locator(mticker.MaxNLocator(integer=True))
+
+        # Plot yaw distribution as a bar chart
+        self.detection_subplots["yaw"].bar(yaw_bins[:-1], yaw_counts, color="C4", alpha=0.7, width=yaw_bin_width * 0.5)
+        self.detection_subplots["yaw"].set_title("Yaw Distribution")
+        self.detection_subplots["yaw"].set_xlabel("Yaw [deg]")
+        self.detection_subplots["yaw"].set_ylabel("Count")
+        self.detection_subplots["yaw"].set_xticks(yaw_bins)
+        self.detection_subplots["yaw"].yaxis.set_major_locator(mticker.MaxNLocator(integer=True))
+
+        plt.tight_layout()
+        plt.pause(0.1)
 
 
     def draw_subplots(self):
@@ -234,7 +356,6 @@ class MetricsPlotter:
                     alpha=0.3,
                 )
 
-
     def draw_with_msg(self, msg):
         methods_in_msg = [method.method_name for method in msg.method_metrics]
 
@@ -250,10 +371,12 @@ class MetricsPlotter:
         self.update_metrics(msg)
         self.draw_subplots()
         self.plot_label_and_set_xy_lim()
+
+        # Handle detections
+        ranges, pitches, yaws = self.compute_detection_metrics(msg.detections)
+        self.plot_detection_distributions(ranges, pitches, yaws)
         plt.tight_layout()
         plt.pause(0.1)
-
-
 
 
 class MetricsPlotterNode(Node):

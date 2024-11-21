@@ -378,7 +378,7 @@ void TagCalibratorVisualizer::drawCalibrationStatusText(
     return;
   }
 
-  auto to_string_with_precision = [](const double value, const int n = 2) -> std::string {
+  auto toStringWithPrecision = [](const double value, const int n = 2) -> std::string {
     std::ostringstream out;
     out.precision(n);
     out << std::fixed << value;
@@ -405,9 +405,9 @@ void TagCalibratorVisualizer::drawCalibrationStatusText(
 
   text_marker.text =
     "pairs=" + std::to_string(estimator.getCurrentCalibrationPairsNumber()) +
-    "\ncoverage=" + to_string_with_precision(estimator.getCalibrationCoveragePercentage()) +
+    "\ncoverage=" + toStringWithPrecision(estimator.getCalibrationCoveragePercentage()) +
     "\ncrossvalidation_reprojection_error=" +
-    to_string_with_precision(estimator.getCrossValidationReprojectionError());
+    toStringWithPrecision(estimator.getCrossValidationReprojectionError());
 
   text_marker.pose.position.x = base_lidar_translation_vector(0);
   text_marker.pose.position.y = base_lidar_translation_vector(1);
@@ -435,17 +435,17 @@ void TagCalibratorVisualizer::drawCalibrationStatusText(
     text_marker.scale.z = 0.1;
 
     text_marker.text = "id=" + std::to_string(id) +
-                       "\nt_total=" + to_string_with_precision(time_since_first_observation) + "/" +
-                       to_string_with_precision(min_convergence_time_) +
-                       "\nt_since_last=" + to_string_with_precision(time_since_last_observation) +
-                       "/" + to_string_with_precision(max_no_observation_time_) +
-                       "\ntrans_cov=" + to_string_with_precision(trans_cov, 3) + "/" +
-                       to_string_with_precision(lidartag_convergence_translation_, 3) +
-                       "\nrotation_cov=" + to_string_with_precision(rotation_cov, 3) + "/" +
-                       to_string_with_precision(lidartag_convergence_rotation_, 3) +
-                       "\nspeed=" + to_string_with_precision(speed, 3) + "/" +
-                       to_string_with_precision(lidartag_convergence_translation_dot_, 3) +
-                       to_string_with_precision(lidartag_convergence_rotation_dot_, 3);
+                       "\nt_total=" + toStringWithPrecision(time_since_first_observation) + "/" +
+                       toStringWithPrecision(min_convergence_time_) +
+                       "\nt_since_last=" + toStringWithPrecision(time_since_last_observation) +
+                       "/" + toStringWithPrecision(max_no_observation_time_) +
+                       "\ntrans_cov=" + toStringWithPrecision(trans_cov, 3) + "/" +
+                       toStringWithPrecision(lidartag_convergence_translation_, 3) +
+                       "\nrotation_cov=" + toStringWithPrecision(rotation_cov, 3) + "/" +
+                       toStringWithPrecision(lidartag_convergence_rotation_, 3) +
+                       "\nspeed=" + toStringWithPrecision(speed, 3) + "/" +
+                       toStringWithPrecision(lidartag_convergence_translation_dot_, 3) +
+                       toStringWithPrecision(lidartag_convergence_rotation_dot_, 3);
 
     text_marker.pose.position.x = center_base(0);
     text_marker.pose.position.y = center_base(1);
