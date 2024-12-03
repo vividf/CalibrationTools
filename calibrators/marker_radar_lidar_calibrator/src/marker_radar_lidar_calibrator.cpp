@@ -430,8 +430,9 @@ void ExtrinsicReflectorBasedCalibrator::deleteTrackRequestCallback(
 {
   using std::chrono_literals::operator""s;
 
-  int track_id_to_delete = (request->pair_id == -1) ? static_cast<int>(converged_tracks_.size())
-                                                   : request->pair_id;
+  int track_id_to_delete = (request->pair_id < 0) 
+    ? static_cast<int>(converged_tracks_.size()) + request->pair_id + 1 
+    : request->pair_id;
 
   // Search for the track with the specified ID
   auto it = std::find_if(
@@ -1980,9 +1981,6 @@ void ExtrinsicReflectorBasedCalibrator::visualizeTrackMarkers()
       marker.text = "\n ID:" + std::to_string(track.id)  + "\n dist_err" + toStringWithPrecision(track.distance_error, 2) + "\n yaw_err=" + toStringWithPrecision(track.yaw_error, 2);
       markers.push_back(marker); 
     }
-
-
-
   };
 
   // Visualization
