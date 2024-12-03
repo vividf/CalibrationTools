@@ -5,8 +5,18 @@
   <arg name="radar_optimization_frame"/>
   <arg name="radar_frame"/>
   <arg name="lidar_frame"/>
-  <arg name="msg_type"/>
-  <arg name="transformation_type"/>
+  <arg name="msg_type" default="radar_tracks">
+    <choice value="radar_tracks"/>
+    <choice value="radar_scan"/>
+    <choice value="radar_cloud"/>
+  </arg>
+
+  <arg name="transformation_type" default="svd_2d">
+    <choice value="svd_2d"/>
+    <choice value="yaw_only_rotation_2d"/>
+    <choice value="svd_3d"/>
+    <choice value="zero_roll_3d"/>
+  </arg>
 
   <arg name="input_radar_msg"/>
   <arg name="input_lidar_pointcloud"/>
