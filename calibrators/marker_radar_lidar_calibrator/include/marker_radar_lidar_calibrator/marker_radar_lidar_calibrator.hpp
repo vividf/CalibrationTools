@@ -31,6 +31,7 @@
 #include <tier4_calibration_msgs/msg/detail/calibration_metrics__struct.hpp>
 #include <tier4_calibration_msgs/srv/delete_lidar_radar_pair.hpp>
 #include <tier4_calibration_msgs/srv/extrinsic_calibrator.hpp>
+#include <tier4_calibration_msgs/srv/file_srv.hpp>
 #include <visualization_msgs/msg/marker_array.hpp>
 
 #include <pcl/pcl_base.h>
@@ -171,6 +172,23 @@ protected:
   void deleteTrackRequestCallback(
     const std::shared_ptr<tier4_calibration_msgs::srv::DeleteLidarRadarPair::Request> request,
     const std::shared_ptr<tier4_calibration_msgs::srv::DeleteLidarRadarPair::Response> response);
+
+  void loadDatabaseCallback(
+    const std::shared_ptr<tier4_calibration_msgs::srv::FileSrv::Request> request,
+    std::shared_ptr<tier4_calibration_msgs::srv::FileSrv::Response> response);
+
+  void saveDatabaseCallback(
+    const std::shared_ptr<tier4_calibration_msgs::srv::FileSrv::Request> request,
+    std::shared_ptr<tier4_calibration_msgs::srv::FileSrv::Response> response);
+
+  void logErrorAndRespond(
+    std::shared_ptr<tier4_calibration_msgs::srv::FileSrv::Response> & response,
+    const std::string & error_message);
+
+  void parseConvergedTracks(std::ifstream & file);
+  void parseMatrices(std::ifstream & file);
+  void parseLidarHeader(std::ifstream & file);
+  void trim(std::string & str);
 
   void lidarCallback(const sensor_msgs::msg::PointCloud2::SharedPtr msg);
 
@@ -331,6 +349,8 @@ protected:
 
   rclcpp::Service<tier4_calibration_msgs::srv::ExtrinsicCalibrator>::SharedPtr
     calibration_request_server_;
+  rclcpp::Service<tier4_calibration_msgs::srv::FileSrv>::SharedPtr load_database_service_server_;
+  rclcpp::Service<tier4_calibration_msgs::srv::FileSrv>::SharedPtr save_database_service_server_;
   rclcpp::Service<std_srvs::srv::Empty>::SharedPtr background_model_service_server_;
   rclcpp::Service<std_srvs::srv::Empty>::SharedPtr tracking_service_server_;
   rclcpp::Service<std_srvs::srv::Empty>::SharedPtr send_calibration_service_server_;
