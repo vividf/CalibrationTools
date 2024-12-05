@@ -179,6 +179,9 @@ class MetricsPlotter:
         for subplot in self.detection_subplots.values():
             subplot.clear()
 
+        if not ranges or not pitches or not yaws:
+            return
+
         # Define bin intervals
         range_bin_width = 5  # Interval of 5 meters
         pitch_bin_width = 0.2  # Interval of 0.2 degrees

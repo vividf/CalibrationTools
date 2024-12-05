@@ -17,8 +17,6 @@
 #include <marker_radar_lidar_calibrator/transformation_estimator.hpp>
 #include <tf2_eigen/tf2_eigen.hpp>
 
-#include <tier4_calibration_msgs/msg/detail/calibration_metrics__struct.hpp>
-
 #include <pcl/ModelCoefficients.h>
 #include <pcl/PCLPointCloud2.h>
 #include <pcl/common/common.h>
@@ -226,16 +224,16 @@ ExtrinsicReflectorBasedCalibrator::ExtrinsicReflectorBasedCalibrator(
 
   if (transformation_type == "svd_2d") {
     transformation_type_ = TransformationType::svd_2d;
-    marker_size_per_track_ = 8;
+    marker_size_per_track_ = 9;
   } else if (transformation_type == "yaw_only_rotation_2d") {
     transformation_type_ = TransformationType::yaw_only_rotation_2d;
-    marker_size_per_track_ = 8;
+    marker_size_per_track_ = 9;
   } else if (transformation_type == "svd_3d") {
     transformation_type_ = TransformationType::svd_3d;
-    marker_size_per_track_ = 9;
+    marker_size_per_track_ = 8;
   } else if (transformation_type == "zero_roll_3d") {
     transformation_type_ = TransformationType::zero_roll_3d;
-    marker_size_per_track_ = 9;
+    marker_size_per_track_ = 8;
   } else {
     throw std::runtime_error("Invalid param value: " + transformation_type);
   }
@@ -315,6 +313,19 @@ ExtrinsicReflectorBasedCalibrator::ExtrinsicReflectorBasedCalibrator(
       std::placeholders::_1, std::placeholders::_2),
     rmw_qos_profile_services_default, calibration_ui_srv_callback_group_);
 
+  load_database_service_server_ = this->create_service<tier4_calibration_msgs::srv::FileSrv>(
+    "load_database",
+    std::bind(
+      &ExtrinsicReflectorBasedCalibrator::loadDatabaseCallback, this, std::placeholders::_1,
+      std::placeholders::_2),
+    rmw_qos_profile_services_default, calibration_ui_srv_callback_group_);
+  save_database_service_server_ = this->create_service<tier4_calibration_msgs::srv::FileSrv>(
+    "save_database",
+    std::bind(
+      &ExtrinsicReflectorBasedCalibrator::saveDatabaseCallback, this, std::placeholders::_1,
+      std::placeholders::_2),
+    rmw_qos_profile_services_default, calibration_ui_srv_callback_group_);
+
   timer_ = rclcpp::create_timer(
     this, get_clock(), std::chrono::seconds(1),
     std::bind(&ExtrinsicReflectorBasedCalibrator::timerCallback, this));
@@ -386,6 +397,14 @@ void ExtrinsicReflectorBasedCalibrator::timerCallback()
           std::placeholders::_1, std::placeholders::_2),
         rmw_qos_profile_services_default, calibration_ui_srv_callback_group_);
   }
+
+  // if(converged_tracks_.size() > 0 && !save_database_service_server_) {
+  //   save_database_service_server_ = this->create_service<tier4_calibration_msgs::srv::FileSrv>(
+  //   "save_database", std::bind(
+  //                      &ExtrinsicReflectorBasedCalibrator::saveDatabaseCallback, this,
+  //                      std::placeholders::_1, std::placeholders::_2),
+  //                      rmw_qos_profile_services_default, calibration_ui_srv_callback_group_);
+  // }
 }
 
 void ExtrinsicReflectorBasedCalibrator::backgroundModelRequestCallback(
@@ -488,6 +507,206 @@ void ExtrinsicReflectorBasedCalibrator::sendCalibrationCallback(
 {
   std::unique_lock<std::mutex> lock(mutex_);
   send_calibration_ = true;
+}
+void ExtrinsicReflectorBasedCalibrator::loadDatabaseCallback(
+  const std::shared_ptr<tier4_calibration_msgs::srv::FileSrv::Request> request,
+  std::shared_ptr<tier4_calibration_msgs::srv::FileSrv::Response> response)
+{
+  const std::string & file_path = request->file;
+
+  std::ifstream file(file_path);
+  if (!file.is_open()) {
+    logErrorAndRespond(response, "Failed to open the file: " + file_path);
+    return;
+  }
+
+  try {
+    parseConvergedTracks(file);
+    parseMatrices(file);
+    parseLidarHeader(file);
+  } catch (const std::exception & e) {
+    logErrorAndRespond(response, e.what());
+    return;
+  }
+
+  file.close();
+  response->success = true;
+  RCLCPP_INFO(this->get_logger(), "Database successfully loaded from: %s", file_path.c_str());
+
+  calibrateSensors();
+  visualizeTrackMarkers();
+  drawCalibrationStatusText();
+}
+
+void ExtrinsicReflectorBasedCalibrator::logErrorAndRespond(
+  std::shared_ptr<tier4_calibration_msgs::srv::FileSrv::Response> & response,
+  const std::string & error_message)
+{
+  response->success = false;
+  RCLCPP_ERROR(this->get_logger(), "%s", error_message.c_str());
+}
+
+void ExtrinsicReflectorBasedCalibrator::parseConvergedTracks(std::ifstream & file)
+{
+  converged_tracks_.clear();
+  std::string line;
+
+  // Skip the header line.
+  if (!std::getline(file, line)) {
+    throw std::runtime_error("File is empty or missing the header line.");
+  }
+
+  // Parse the point cloud data.
+  while (std::getline(file, line) && !line.empty()) {
+    if (line.find("matrix:") != std::string::npos) break;  // Stop if a matrix section starts.
+
+    std::istringstream stream(line);
+    std::vector<double> values;
+    double value;
+
+    while (stream >> value) {  // Parse values.
+      values.push_back(value);
+    }
+
+    if (values.size() != 6) {
+      throw std::runtime_error("Invalid number of values in line: " + line);
+    }
+
+    Track track;
+    track.id = converged_tracks_.size() + 1;
+    track.lidar_estimation = Eigen::Vector3d(values[0], values[1], values[2]);
+    track.radar_estimation = Eigen::Vector3d(values[3], values[4], values[5]);
+
+    converged_tracks_.emplace_back(std::move(track));
+  }
+}
+
+void ExtrinsicReflectorBasedCalibrator::parseMatrices(std::ifstream & file)
+{
+  auto parseMatrix = [&](Eigen::Isometry3d & transform, const std::string & expected_header) {
+    std::string line;
+
+    // Skip blank lines.
+    while (std::getline(file, line) && line.empty()) {
+    }
+
+    if (line != expected_header) {
+      throw std::runtime_error("Missing or invalid " + expected_header);
+    }
+
+    Eigen::Matrix4d matrix;
+    for (int i = 0; i < 4; ++i) {
+      if (!std::getline(file, line)) {
+        throw std::runtime_error("Failed to read matrix line for " + expected_header);
+      }
+      std::istringstream stream(line);
+      for (int j = 0; j < 4; ++j) {
+        if (!(stream >> matrix(i, j))) {
+          throw std::runtime_error("Invalid matrix value in " + expected_header);
+        }
+      }
+    }
+    transform = Eigen::Isometry3d(matrix);
+  };
+
+  parseMatrix(initial_radar_to_lidar_eigen_, "initial_radar_to_lidar_eigen_matrix:");
+  parseMatrix(radar_optimization_to_lidar_eigen_, "radar_optimization_to_lidar_eigen_matrix:");
+  parseMatrix(
+    initial_radar_optimization_to_radar_eigen_,
+    "initial_radar_optimization_to_radar_eigen_matrix:");
+}
+
+void ExtrinsicReflectorBasedCalibrator::parseLidarHeader(std::ifstream & file)
+{
+  std::string line;
+
+  // Parse lidar_header.
+  while (std::getline(file, line)) {
+    trim(line);                // Trim whitespace.
+    if (!line.empty()) break;  // Skip blank lines.
+  }
+
+  if (line != "lidar_header:") {
+    throw std::runtime_error("Failed to find lidar_header section.");
+  }
+
+  if (!std::getline(file, line) || line.rfind("stamp_sec ", 0) != 0) {
+    throw std::runtime_error("Missing or invalid stamp_sec in lidar_header.");
+  }
+  lidar_header_.stamp.sec = std::stoi(line.substr(10));
+
+  if (!std::getline(file, line) || line.rfind("stamp_nanosec ", 0) != 0) {
+    throw std::runtime_error("Missing or invalid stamp_nanosec in lidar_header.");
+  }
+  lidar_header_.stamp.nanosec = std::stoi(line.substr(14));
+
+  if (!std::getline(file, line) || line.rfind("frame_id ", 0) != 0) {
+    throw std::runtime_error("Missing or invalid frame_id in lidar_header.");
+  }
+  lidar_header_.frame_id = line.substr(9);
+}
+
+void ExtrinsicReflectorBasedCalibrator::trim(std::string & str)
+{
+  str.erase(0, str.find_first_not_of(" \t"));  // Trim leading whitespace.
+  str.erase(str.find_last_not_of(" \t") + 1);  // Trim trailing whitespace.
+}
+
+void ExtrinsicReflectorBasedCalibrator::saveDatabaseCallback(
+  const std::shared_ptr<tier4_calibration_msgs::srv::FileSrv::Request> request,
+  std::shared_ptr<tier4_calibration_msgs::srv::FileSrv::Response> response)
+{
+  const std::string & file_path = request->file;
+
+  std::ofstream file(file_path);
+
+  if (!file.is_open()) {
+    response->success = false;
+    RCLCPP_ERROR(this->get_logger(), "Failed to open the file: %s", file_path.c_str());
+    return;
+  }
+
+  // Write headers
+  file << std::left << std::setw(20) << "lidar_estimation_x" << std::setw(20)
+       << "lidar_estimation_y" << std::setw(20) << "lidar_estimation_z" << std::setw(20)
+       << "radar_estimation_x" << std::setw(20) << "radar_estimation_y" << std::setw(20)
+       << "radar_estimation_z"
+       << "\n";
+
+  // Write tracks
+  for (const auto & track : converged_tracks_) {
+    file << std::setw(20) << track.lidar_estimation.x() << std::setw(20)
+         << track.lidar_estimation.y() << std::setw(20) << track.lidar_estimation.z()
+         << std::setw(20) << track.radar_estimation.x() << std::setw(20)
+         << track.radar_estimation.y() << std::setw(20) << track.radar_estimation.z() << "\n";
+  }
+
+  // Write matrices
+  auto writeMatrix = [&](const Eigen::Matrix4d & matrix, const std::string & header) {
+    file << "\n" << header << "\n";
+    for (int i = 0; i < 4; ++i) {
+      for (int j = 0; j < 4; ++j) {
+        file << std::setw(20) << matrix(i, j);
+      }
+      file << "\n";
+    }
+  };
+
+  writeMatrix(initial_radar_to_lidar_eigen_.matrix(), "initial_radar_to_lidar_eigen_matrix:");
+  writeMatrix(
+    radar_optimization_to_lidar_eigen_.matrix(), "radar_optimization_to_lidar_eigen_matrix:");
+  writeMatrix(
+    initial_radar_optimization_to_radar_eigen_.matrix(),
+    "initial_radar_optimization_to_radar_eigen_matrix:");
+
+  file << "\nlidar_header:\n";
+  file << "stamp_sec " << lidar_header_.stamp.sec << "\n";
+  file << "stamp_nanosec " << lidar_header_.stamp.nanosec << "\n";
+  file << "frame_id " << lidar_header_.frame_id << "\n";
+
+  file.close();
+  response->success = true;
+  RCLCPP_INFO(this->get_logger(), "Tracks successfully stored in: %s", file_path.c_str());
 }
 
 void ExtrinsicReflectorBasedCalibrator::lidarCallback(
