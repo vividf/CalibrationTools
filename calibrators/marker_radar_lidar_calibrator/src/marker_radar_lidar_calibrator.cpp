@@ -319,12 +319,6 @@ ExtrinsicReflectorBasedCalibrator::ExtrinsicReflectorBasedCalibrator(
       &ExtrinsicReflectorBasedCalibrator::loadDatabaseCallback, this, std::placeholders::_1,
       std::placeholders::_2),
     rmw_qos_profile_services_default, calibration_ui_srv_callback_group_);
-  save_database_service_server_ = this->create_service<tier4_calibration_msgs::srv::FileSrv>(
-    "save_database",
-    std::bind(
-      &ExtrinsicReflectorBasedCalibrator::saveDatabaseCallback, this, std::placeholders::_1,
-      std::placeholders::_2),
-    rmw_qos_profile_services_default, calibration_ui_srv_callback_group_);
 
   timer_ = rclcpp::create_timer(
     this, get_clock(), std::chrono::seconds(1),
@@ -398,13 +392,14 @@ void ExtrinsicReflectorBasedCalibrator::timerCallback()
         rmw_qos_profile_services_default, calibration_ui_srv_callback_group_);
   }
 
-  // if(converged_tracks_.size() > 0 && !save_database_service_server_) {
-  //   save_database_service_server_ = this->create_service<tier4_calibration_msgs::srv::FileSrv>(
-  //   "save_database", std::bind(
-  //                      &ExtrinsicReflectorBasedCalibrator::saveDatabaseCallback, this,
-  //                      std::placeholders::_1, std::placeholders::_2),
-  //                      rmw_qos_profile_services_default, calibration_ui_srv_callback_group_);
-  // }
+  if (converged_tracks_.size() > 0 && !save_database_service_server_) {
+    save_database_service_server_ = this->create_service<tier4_calibration_msgs::srv::FileSrv>(
+      "save_database",
+      std::bind(
+        &ExtrinsicReflectorBasedCalibrator::saveDatabaseCallback, this, std::placeholders::_1,
+        std::placeholders::_2),
+      rmw_qos_profile_services_default, calibration_ui_srv_callback_group_);
+  }
 }
 
 void ExtrinsicReflectorBasedCalibrator::backgroundModelRequestCallback(
@@ -522,8 +517,11 @@ void ExtrinsicReflectorBasedCalibrator::loadDatabaseCallback(
 
   try {
     parseConvergedTracks(file);
-    parseMatrices(file);
-    parseLidarHeader(file);
+    // parseMatrices(file);
+    parseHeader(file, "lidar_header:", lidar_header_);
+    parseHeader(file, "radar_header:", radar_header_);
+    lidar_frame_ = lidar_header_.frame_id;
+    radar_frame_ = radar_header_.frame_id;
   } catch (const std::exception & e) {
     logErrorAndRespond(response, e.what());
     return;
@@ -532,6 +530,12 @@ void ExtrinsicReflectorBasedCalibrator::loadDatabaseCallback(
   file.close();
   response->success = true;
   RCLCPP_INFO(this->get_logger(), "Database successfully loaded from: %s", file_path.c_str());
+
+  while (!checkInitialTransforms()) {
+    RCLCPP_WARN_THROTTLE(
+      this->get_logger(), *this->get_clock(), 5000,
+      "Please provide TF for your LiDAR and radar data");
+  }
 
   calibrateSensors();
   visualizeTrackMarkers();
@@ -581,69 +585,35 @@ void ExtrinsicReflectorBasedCalibrator::parseConvergedTracks(std::ifstream & fil
   }
 }
 
-void ExtrinsicReflectorBasedCalibrator::parseMatrices(std::ifstream & file)
-{
-  auto parseMatrix = [&](Eigen::Isometry3d & transform, const std::string & expected_header) {
-    std::string line;
-
-    // Skip blank lines.
-    while (std::getline(file, line) && line.empty()) {
-    }
-
-    if (line != expected_header) {
-      throw std::runtime_error("Missing or invalid " + expected_header);
-    }
-
-    Eigen::Matrix4d matrix;
-    for (int i = 0; i < 4; ++i) {
-      if (!std::getline(file, line)) {
-        throw std::runtime_error("Failed to read matrix line for " + expected_header);
-      }
-      std::istringstream stream(line);
-      for (int j = 0; j < 4; ++j) {
-        if (!(stream >> matrix(i, j))) {
-          throw std::runtime_error("Invalid matrix value in " + expected_header);
-        }
-      }
-    }
-    transform = Eigen::Isometry3d(matrix);
-  };
-
-  parseMatrix(initial_radar_to_lidar_eigen_, "initial_radar_to_lidar_eigen_matrix:");
-  parseMatrix(radar_optimization_to_lidar_eigen_, "radar_optimization_to_lidar_eigen_matrix:");
-  parseMatrix(
-    initial_radar_optimization_to_radar_eigen_,
-    "initial_radar_optimization_to_radar_eigen_matrix:");
-}
-
-void ExtrinsicReflectorBasedCalibrator::parseLidarHeader(std::ifstream & file)
+void ExtrinsicReflectorBasedCalibrator::parseHeader(
+  std::ifstream & file, const std::string & header_name, std_msgs::msg::Header & header)
 {
   std::string line;
 
-  // Parse lidar_header.
+  // Parse the header section.
   while (std::getline(file, line)) {
     trim(line);                // Trim whitespace.
     if (!line.empty()) break;  // Skip blank lines.
   }
 
-  if (line != "lidar_header:") {
-    throw std::runtime_error("Failed to find lidar_header section.");
+  if (line != header_name) {
+    throw std::runtime_error("Failed to find " + header_name + " section.");
   }
 
   if (!std::getline(file, line) || line.rfind("stamp_sec ", 0) != 0) {
-    throw std::runtime_error("Missing or invalid stamp_sec in lidar_header.");
+    throw std::runtime_error("Missing or invalid stamp_sec in " + header_name + " section.");
   }
-  lidar_header_.stamp.sec = std::stoi(line.substr(10));
+  header.stamp.sec = std::stoi(line.substr(10));
 
   if (!std::getline(file, line) || line.rfind("stamp_nanosec ", 0) != 0) {
-    throw std::runtime_error("Missing or invalid stamp_nanosec in lidar_header.");
+    throw std::runtime_error("Missing or invalid stamp_nanosec in " + header_name + " section.");
   }
-  lidar_header_.stamp.nanosec = std::stoi(line.substr(14));
+  header.stamp.nanosec = std::stoi(line.substr(14));
 
   if (!std::getline(file, line) || line.rfind("frame_id ", 0) != 0) {
-    throw std::runtime_error("Missing or invalid frame_id in lidar_header.");
+    throw std::runtime_error("Missing or invalid frame_id in " + header_name + " section.");
   }
-  lidar_header_.frame_id = line.substr(9);
+  header.frame_id = line.substr(9);
 }
 
 void ExtrinsicReflectorBasedCalibrator::trim(std::string & str)
@@ -681,28 +651,16 @@ void ExtrinsicReflectorBasedCalibrator::saveDatabaseCallback(
          << track.radar_estimation.y() << std::setw(20) << track.radar_estimation.z() << "\n";
   }
 
-  // Write matrices
-  auto writeMatrix = [&](const Eigen::Matrix4d & matrix, const std::string & header) {
-    file << "\n" << header << "\n";
-    for (int i = 0; i < 4; ++i) {
-      for (int j = 0; j < 4; ++j) {
-        file << std::setw(20) << matrix(i, j);
-      }
-      file << "\n";
-    }
-  };
-
-  writeMatrix(initial_radar_to_lidar_eigen_.matrix(), "initial_radar_to_lidar_eigen_matrix:");
-  writeMatrix(
-    radar_optimization_to_lidar_eigen_.matrix(), "radar_optimization_to_lidar_eigen_matrix:");
-  writeMatrix(
-    initial_radar_optimization_to_radar_eigen_.matrix(),
-    "initial_radar_optimization_to_radar_eigen_matrix:");
-
+  // Write header
   file << "\nlidar_header:\n";
   file << "stamp_sec " << lidar_header_.stamp.sec << "\n";
   file << "stamp_nanosec " << lidar_header_.stamp.nanosec << "\n";
   file << "frame_id " << lidar_header_.frame_id << "\n";
+
+  file << "\nradar_header:\n";
+  file << "stamp_sec " << radar_header_.stamp.sec << "\n";
+  file << "stamp_nanosec " << radar_header_.stamp.nanosec << "\n";
+  file << "frame_id " << radar_header_.frame_id << "\n";
 
   file.close();
   response->success = true;
@@ -1384,7 +1342,8 @@ bool ExtrinsicReflectorBasedCalibrator::checkInitialTransforms()
 
     got_initial_transform_ = true;
   } catch (tf2::TransformException & ex) {
-    RCLCPP_WARN(this->get_logger(), "could not get initial tf. %s", ex.what());
+    RCLCPP_WARN_THROTTLE(
+      this->get_logger(), *this->get_clock(), 5000, "could not get initial tf. %s", ex.what());
     return false;
   }
 

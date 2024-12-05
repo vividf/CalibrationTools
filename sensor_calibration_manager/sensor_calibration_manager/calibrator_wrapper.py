@@ -118,6 +118,10 @@ class CalibratorServiceWrapper(QObject):
             parent_frame = calibration_result.transform_stamped.header.frame_id
             child_frame = calibration_result.transform_stamped.child_frame_id
 
+            print("debug: parent_frame: ", parent_frame)
+            print("debug: child_frame: ", child_frame)
+            print("debug: self.children: ", self.children)
+
             if parent_frame not in self.parents or child_frame not in self.children:
                 logging.error(
                     f"Calibration result {parent_frame} -> {child_frame} was not expected. This is probably a configuration error in the launchers"

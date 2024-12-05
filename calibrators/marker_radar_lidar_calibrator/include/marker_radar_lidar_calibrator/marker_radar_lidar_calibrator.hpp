@@ -186,8 +186,8 @@ protected:
     const std::string & error_message);
 
   void parseConvergedTracks(std::ifstream & file);
-  void parseMatrices(std::ifstream & file);
-  void parseLidarHeader(std::ifstream & file);
+  void parseHeader(
+    std::ifstream & file, const std::string & header_name, std_msgs::msg::Header & header);
   void trim(std::string & str);
 
   void lidarCallback(const sensor_msgs::msg::PointCloud2::SharedPtr msg);
