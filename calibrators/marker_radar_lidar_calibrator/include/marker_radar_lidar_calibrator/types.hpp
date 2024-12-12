@@ -16,12 +16,17 @@
 
 #include <Eigen/Dense>
 
+#include <geometry_msgs/msg/point.hpp>
+
 #include <pcl/kdtree/kdtree_flann.h>
 #include <pcl/pcl_base.h>
 #include <pcl/point_types.h>
 
 #include <limits>
+#include <unordered_map>
 #include <unordered_set>
+#include <utility>
+#include <vector>
 
 namespace marker_radar_lidar_calibrator
 {
@@ -57,6 +62,91 @@ public:
   std::unordered_set<index_t> set_;
   pcl::PointCloud<common_types::PointType>::Ptr pointcloud_;
   TreeType tree_;
+};
+
+enum class TransformationType { svd_2d, yaw_only_rotation_2d, svd_3d, zero_roll_3d };
+
+struct TransformationResult
+{
+  pcl::PointCloud<common_types::PointType>::Ptr lidar_points_ocs;
+  pcl::PointCloud<common_types::PointType>::Ptr radar_points_rcs;
+  std::unordered_map<TransformationType, Eigen::Isometry3d>
+    calibrated_radar_to_lidar_transformations;
+
+  void initializeTransformations()
+  {
+    calibrated_radar_to_lidar_transformations[TransformationType::svd_2d] =
+      Eigen::Isometry3d::Identity();
+    calibrated_radar_to_lidar_transformations[TransformationType::yaw_only_rotation_2d] =
+      Eigen::Isometry3d::Identity();
+    calibrated_radar_to_lidar_transformations[TransformationType::svd_3d] =
+      Eigen::Isometry3d::Identity();
+    calibrated_radar_to_lidar_transformations[TransformationType::zero_roll_3d] =
+      Eigen::Isometry3d::Identity();
+  }
+
+  void clear()
+  {
+    lidar_points_ocs.reset();
+    radar_points_rcs.reset();
+    calibrated_radar_to_lidar_transformations.clear();
+  }
+};
+
+struct CalibrationErrorMetrics
+{
+  double calibrated_distance_error = 0;
+  double calibrated_yaw_error = 0;
+  std::vector<double> avg_crossval_calibrated_distance_error;
+  std::vector<double> avg_crossval_calibrated_yaw_error;
+  std::vector<double> std_crossval_calibrated_distance_error;
+  std::vector<double> std_crossval_calibrated_yaw_error;
+
+  void clear()
+  {
+    calibrated_distance_error = 0;
+    calibrated_yaw_error = 0;
+    avg_crossval_calibrated_distance_error.clear();
+    avg_crossval_calibrated_yaw_error.clear();
+    std_crossval_calibrated_distance_error.clear();
+    std_crossval_calibrated_yaw_error.clear();
+  }
+};
+
+struct OutputMetrics
+{
+  int num_of_converged_tracks = 0;
+  std::vector<int> num_of_samples;
+  std::unordered_map<TransformationType, CalibrationErrorMetrics> methods;
+  std::vector<geometry_msgs::msg::Point> detections;
+
+  void clear()
+  {
+    num_of_converged_tracks = 0;
+    num_of_samples.clear();
+    for (auto & [type, metrics] : methods) {
+      metrics.clear();
+    }
+    detections.clear();
+  }
+
+  void initializeMethods()
+  {
+    methods.clear();
+    methods[TransformationType::svd_2d] = CalibrationErrorMetrics();
+    methods[TransformationType::yaw_only_rotation_2d] = CalibrationErrorMetrics();
+    methods[TransformationType::svd_3d] = CalibrationErrorMetrics();
+    methods[TransformationType::zero_roll_3d] = CalibrationErrorMetrics();
+  }
+};
+
+struct Track
+{
+  int id;
+  Eigen::Vector3d lidar_estimation;
+  Eigen::Vector3d radar_estimation;
+  double distance_error;
+  double yaw_error;
 };
 
 }  // namespace marker_radar_lidar_calibrator
