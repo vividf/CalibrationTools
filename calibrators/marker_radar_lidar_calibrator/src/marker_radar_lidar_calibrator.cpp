@@ -36,7 +36,6 @@
 #include <iostream>
 #include <limits>
 #include <memory>
-#include <random>
 #include <sstream>
 #include <string>
 #include <tuple>
@@ -224,16 +223,12 @@ ExtrinsicReflectorBasedCalibrator::ExtrinsicReflectorBasedCalibrator(
 
   if (transformation_type == "svd_2d") {
     transformation_type_ = TransformationType::svd_2d;
-    marker_size_per_track_ = 9;
   } else if (transformation_type == "yaw_only_rotation_2d") {
     transformation_type_ = TransformationType::yaw_only_rotation_2d;
-    marker_size_per_track_ = 9;
   } else if (transformation_type == "svd_3d") {
     transformation_type_ = TransformationType::svd_3d;
-    marker_size_per_track_ = 8;
   } else if (transformation_type == "zero_roll_3d") {
     transformation_type_ = TransformationType::zero_roll_3d;
-    marker_size_per_track_ = 8;
   } else {
     throw std::runtime_error("Invalid param value: " + transformation_type);
   }
@@ -470,12 +465,17 @@ void ExtrinsicReflectorBasedCalibrator::deleteTrackRequestCallback(
 
   if (it != converged_tracks_.end()) {
     // Track found; delete it
-    deleteTrackMarkers();
+    auto delete_markers = visualization_.deleteTrackMarkers(converged_tracks_.size());
+    tracking_markers_pub_->publish(delete_markers);
     converged_tracks_.erase(it);
-    updateTrackIds();
+    updateTrackIds(converged_tracks_);
     calibrateSensors();
-    visualizeTrackMarkers();
-    drawCalibrationStatusText();
+    auto tracking_markers =
+      visualization_.visualizeTrackMarkers(converged_tracks_, calibrated_radar_to_lidar_eigen_);
+    tracking_markers_pub_->publish(tracking_markers);
+    auto text_markers =
+      visualization_.drawCalibrationStatusText(converged_tracks_.size(), output_metrics_.methods);
+    text_markers_pub_->publish(text_markers);
 
     response->success = true;
     response->message = "Track successfully deleted.";
@@ -516,7 +516,7 @@ void ExtrinsicReflectorBasedCalibrator::loadDatabaseCallback(
   }
 
   try {
-    parseConvergedTracks(file);
+    parseConvergedTracks(file, converged_tracks_);
     // parseMatrices(file);
     parseHeader(file, "lidar_header:", lidar_header_);
     parseHeader(file, "radar_header:", radar_header_);
@@ -538,8 +538,12 @@ void ExtrinsicReflectorBasedCalibrator::loadDatabaseCallback(
   }
 
   calibrateSensors();
-  visualizeTrackMarkers();
-  drawCalibrationStatusText();
+  auto tracking_markers =
+    visualization_.visualizeTrackMarkers(converged_tracks_, calibrated_radar_to_lidar_eigen_);
+  tracking_markers_pub_->publish(tracking_markers);
+  auto text_markers =
+    visualization_.drawCalibrationStatusText(converged_tracks_.size(), output_metrics_.methods);
+  text_markers_pub_->publish(text_markers);
 }
 
 void ExtrinsicReflectorBasedCalibrator::logErrorAndRespond(
@@ -548,78 +552,6 @@ void ExtrinsicReflectorBasedCalibrator::logErrorAndRespond(
 {
   response->success = false;
   RCLCPP_ERROR(this->get_logger(), "%s", error_message.c_str());
-}
-
-void ExtrinsicReflectorBasedCalibrator::parseConvergedTracks(std::ifstream & file)
-{
-  converged_tracks_.clear();
-  std::string line;
-
-  // Skip the header line.
-  if (!std::getline(file, line)) {
-    throw std::runtime_error("File is empty or missing the header line.");
-  }
-
-  // Parse the point cloud data.
-  while (std::getline(file, line) && !line.empty()) {
-    if (line.find("matrix:") != std::string::npos) break;  // Stop if a matrix section starts.
-
-    std::istringstream stream(line);
-    std::vector<double> values;
-    double value;
-
-    while (stream >> value) {  // Parse values.
-      values.push_back(value);
-    }
-
-    if (values.size() != 6) {
-      throw std::runtime_error("Invalid number of values in line: " + line);
-    }
-
-    Track track;
-    track.id = converged_tracks_.size() + 1;
-    track.lidar_estimation = Eigen::Vector3d(values[0], values[1], values[2]);
-    track.radar_estimation = Eigen::Vector3d(values[3], values[4], values[5]);
-
-    converged_tracks_.emplace_back(std::move(track));
-  }
-}
-
-void ExtrinsicReflectorBasedCalibrator::parseHeader(
-  std::ifstream & file, const std::string & header_name, std_msgs::msg::Header & header)
-{
-  std::string line;
-
-  // Parse the header section.
-  while (std::getline(file, line)) {
-    trim(line);                // Trim whitespace.
-    if (!line.empty()) break;  // Skip blank lines.
-  }
-
-  if (line != header_name) {
-    throw std::runtime_error("Failed to find " + header_name + " section.");
-  }
-
-  if (!std::getline(file, line) || line.rfind("stamp_sec ", 0) != 0) {
-    throw std::runtime_error("Missing or invalid stamp_sec in " + header_name + " section.");
-  }
-  header.stamp.sec = std::stoi(line.substr(10));
-
-  if (!std::getline(file, line) || line.rfind("stamp_nanosec ", 0) != 0) {
-    throw std::runtime_error("Missing or invalid stamp_nanosec in " + header_name + " section.");
-  }
-  header.stamp.nanosec = std::stoi(line.substr(14));
-
-  if (!std::getline(file, line) || line.rfind("frame_id ", 0) != 0) {
-    throw std::runtime_error("Missing or invalid frame_id in " + header_name + " section.");
-  }
-  header.frame_id = line.substr(9);
-}
-
-void ExtrinsicReflectorBasedCalibrator::trim(std::string & str)
-{
-  str.erase(0, str.find_first_not_of(" \t"));  // Trim leading whitespace.
-  str.erase(str.find_last_not_of(" \t") + 1);  // Trim trailing whitespace.
 }
 
 void ExtrinsicReflectorBasedCalibrator::saveDatabaseCallback(
@@ -708,9 +640,18 @@ void ExtrinsicReflectorBasedCalibrator::lidarCallback(
 
   bool is_track_converged = trackMatches(matches);
   if (is_track_converged) calibrateSensors();
-  visualizationMarkers(lidar_detections, radar_detections, matches);
-  visualizeTrackMarkers();
-  drawCalibrationStatusText();
+  auto output_markers =
+    visualization_.visualizationMarkers(lidar_detections, radar_detections, matches);
+  lidar_detections_pub_->publish(output_markers.lidar_detections_marker_array);
+  radar_detections_pub_->publish(output_markers.radar_detections_marker_array);
+  matches_markers_pub_->publish(output_markers.matches_marker_array);
+
+  auto tracking_markers =
+    visualization_.visualizeTrackMarkers(converged_tracks_, calibrated_radar_to_lidar_eigen_);
+  tracking_markers_pub_->publish(tracking_markers);
+  auto text_markers =
+    visualization_.drawCalibrationStatusText(converged_tracks_.size(), output_metrics_.methods);
+  text_markers_pub_->publish(text_markers);
 
   RCLCPP_INFO(
     this->get_logger(),
@@ -1347,6 +1288,23 @@ bool ExtrinsicReflectorBasedCalibrator::checkInitialTransforms()
     return false;
   }
 
+  // Set visualization parameters
+  VisualizationParamters params;
+  params.lidar_header = lidar_header_;
+  params.radar_header = radar_header_;
+  params.transformation_type = transformation_type_;
+  params.reflector_radius = parameters_.reflector_radius;
+  if (
+    transformation_type_ == TransformationType::svd_2d ||
+    transformation_type_ == TransformationType::yaw_only_rotation_2d) {
+    params.marker_size_per_track = 9;
+  } else {
+    params.marker_size_per_track = 8;
+  }
+
+  params.initial_radar_to_lidar_eigen = initial_radar_to_lidar_eigen_;
+  visualization_.setParameters(params);
+
   return true;
 }
 
@@ -1517,7 +1475,7 @@ bool ExtrinsicReflectorBasedCalibrator::trackMatches(
     converged_tracks_.push_back(*max_distance_track);
   }
 
-  updateTrackIds();
+  updateTrackIds(converged_tracks_);
 
   RCLCPP_INFO(this->get_logger(), "counting_matches number= %lu", converging_tracks_.size());
   RCLCPP_INFO(this->get_logger(), "converged_tracks size= %lu", converged_tracks_.size());
@@ -1628,46 +1586,6 @@ ExtrinsicReflectorBasedCalibrator::getPointsSet()
   return {lidar_points_ocs, radar_points_rcs};
 }
 
-std::pair<double, double> ExtrinsicReflectorBasedCalibrator::computeCalibrationError(
-  const Eigen::Isometry3d & radar_to_lidar_isometry)
-{
-  double total_distance_error = 0.0;
-  double total_yaw_error = 0.0;
-
-  for (auto & track : converged_tracks_) {
-    auto lidar_estimation_transformed = radar_to_lidar_isometry * track.lidar_estimation;
-
-    auto distance_error = getDistanceError(lidar_estimation_transformed, track.radar_estimation);
-    auto yaw_error = getYawError(lidar_estimation_transformed, track.radar_estimation);
-
-    track.distance_error = distance_error;
-    track.yaw_error = yaw_error;
-    total_distance_error += distance_error;
-    total_yaw_error += yaw_error;
-  }
-
-  total_distance_error /= static_cast<double>(converged_tracks_.size());
-  total_yaw_error *= 180.0 / (M_PI * static_cast<double>(converged_tracks_.size()));
-
-  return std::make_pair(total_distance_error, total_yaw_error);
-}
-
-std::string toString(TransformationType type)
-{
-  switch (type) {
-    case TransformationType::svd_2d:
-      return "svd_2d";
-    case TransformationType::yaw_only_rotation_2d:
-      return "yaw_only_rotation_2d";
-    case TransformationType::svd_3d:
-      return "svd_3d";
-    case TransformationType::zero_roll_3d:
-      return "zero_roll_3d";
-    default:
-      return "unknown";
-  }
-}
-
 TransformationResult ExtrinsicReflectorBasedCalibrator::estimateTransformation()
 {
   TransformationResult transformation_result;
@@ -1761,7 +1679,7 @@ void ExtrinsicReflectorBasedCalibrator::evaluateTransformation(
 {
   // Estimate the pre & post calibration error
   auto [initial_distance_error, initial_yaw_error] =
-    computeCalibrationError(initial_radar_to_lidar_eigen_);
+    computeCalibrationError(converged_tracks_, transformation_type_, initial_radar_to_lidar_eigen_);
   RCLCPP_INFO(
     this->get_logger(),
     "Initial calibration error: detection2detection.distance=%.4fm yaw=%.4f degrees",
@@ -1778,7 +1696,8 @@ void ExtrinsicReflectorBasedCalibrator::evaluateTransformation(
 
   for (const auto & [type, transformation] :
        transformation_result.calibrated_radar_to_lidar_transformations) {
-    auto [distance_error, yaw_error] = computeCalibrationError(transformation);
+    auto [distance_error, yaw_error] =
+      computeCalibrationError(converged_tracks_, transformation_type_, transformation);
     output_metrics_.methods[type].calibrated_distance_error = distance_error;
     output_metrics_.methods[type].calibrated_yaw_error = yaw_error;
 
@@ -1808,53 +1727,7 @@ void ExtrinsicReflectorBasedCalibrator::evaluateTransformation(
   }
   output_metrics_.num_of_converged_tracks = converged_tracks_.size();
   for (const auto & converge_track : converged_tracks_) {
-    output_metrics_.detections.push_back(eigenToPoint(converge_track.radar_estimation));
-  }
-}
-
-void ExtrinsicReflectorBasedCalibrator::findCombinations(
-  std::size_t n, std::size_t k, std::vector<std::size_t> & curr, std::size_t first_num,
-  std::vector<std::vector<std::size_t>> & combinations)
-{
-  auto curr_size = curr.size();
-  if (curr_size == k) {
-    combinations.push_back(curr);
-    return;
-  }
-
-  auto need = k - curr_size;
-  auto remain = n - first_num + 1;
-  auto available = remain - need;
-
-  for (auto num = first_num; num <= first_num + available; num++) {
-    curr.push_back(num);
-    findCombinations(n, k, curr, num + 1, combinations);
-    curr.pop_back();
-  }
-
-  return;
-}
-
-void ExtrinsicReflectorBasedCalibrator::selectCombinations(
-  std::size_t tracks_size, std::size_t num_of_samples,
-  std::vector<std::vector<std::size_t>> & combinations)
-{
-  RCLCPP_INFO(
-    this->get_logger(),
-    "Current number of combinations is: %zu, converged_tracks_size: %zu, num_of_samples: %zu",
-    combinations.size(), tracks_size, num_of_samples);
-
-  // random select the combinations if the number of combinations is too large
-  if (combinations.size() > parameters_.max_number_of_combination_samples) {
-    std::random_device rd;
-    std::mt19937 mt(rd());
-    std::shuffle(combinations.begin(), combinations.end(), mt);
-    combinations.resize(parameters_.max_number_of_combination_samples);
-    RCLCPP_WARN(
-      this->get_logger(),
-      "The number of combinations is set to: %zu, because it exceeds the maximum number of "
-      "combination samples: %zu",
-      combinations.size(), parameters_.max_number_of_combination_samples);
+    output_metrics_.detections.push_back(eigenToPointMsg(converge_track.radar_estimation));
   }
 }
 
@@ -1927,7 +1800,8 @@ void ExtrinsicReflectorBasedCalibrator::evaluateCombinations(
       }
 
       // Compute errors for the transformation
-      auto [distance_error, yaw_error] = computeCalibrationError(calibrated_transformation);
+      auto [distance_error, yaw_error] =
+        computeCalibrationError(converged_tracks_, transformation_type_, calibrated_transformation);
       total_distance_errors[type] += distance_error;
       total_yaw_errors[type] += yaw_error;
       distance_error_vectors[type].push_back(distance_error);
@@ -1982,7 +1856,9 @@ void ExtrinsicReflectorBasedCalibrator::crossValEvaluation(
     std::vector<std::size_t> curr;
 
     findCombinations(tracks_size - 1, num_of_samples, curr, 0, combinations);
-    selectCombinations(tracks_size, num_of_samples, combinations);
+    selectCombinations(
+      this->get_logger(), tracks_size, num_of_samples, combinations,
+      parameters_.max_number_of_combination_samples);
     evaluateCombinations(combinations, num_of_samples, transformation_result);
   }
 }
@@ -2027,341 +1903,6 @@ void ExtrinsicReflectorBasedCalibrator::calibrateSensors()
   evaluateTransformation(transformation_result);
   crossValEvaluation(transformation_result);
   publishMetrics();
-}
-
-void ExtrinsicReflectorBasedCalibrator::visualizationMarkers(
-  const std::vector<Eigen::Vector3d> & lidar_detections,
-  const std::vector<Eigen::Vector3d> & radar_detections,
-  const std::vector<std::pair<Eigen::Vector3d, Eigen::Vector3d>> & matched_detections)
-{
-  visualization_msgs::msg::MarkerArray lidar_detections_marker_array;
-
-  for (std::size_t detection_index = 0; detection_index < lidar_detections.size();
-       detection_index++) {
-    const auto & detection_center = lidar_detections[detection_index];
-    visualization_msgs::msg::Marker marker;
-    marker.header = lidar_header_;
-    marker.lifetime = rclcpp::Duration::from_seconds(0.5);
-    marker.id = detection_index;
-    marker.type = visualization_msgs::msg::Marker::CUBE;
-    marker.action = visualization_msgs::msg::Marker::ADD;
-    marker.pose.position.x = detection_center.x();
-    marker.pose.position.y = detection_center.y();
-    marker.pose.position.z = detection_center.z();
-    marker.pose.orientation.w = 1.0;
-    marker.scale.x = 0.05;
-    marker.scale.y = 0.05;
-    marker.scale.z = 0.05;
-    marker.color.a = 0.6;
-    marker.color.r = 0.0;
-    marker.color.g = 0.0;
-    marker.color.b = 1.0;
-    lidar_detections_marker_array.markers.push_back(marker);
-  }
-
-  lidar_detections_pub_->publish(lidar_detections_marker_array);
-
-  visualization_msgs::msg::MarkerArray radar_detections_marker_array;
-
-  for (std::size_t detection_index = 0; detection_index < radar_detections.size();
-       detection_index++) {
-    const auto & detection_center = radar_detections[detection_index];
-    visualization_msgs::msg::Marker marker;
-    marker.header = radar_header_;
-    marker.id = detection_index;
-    marker.type = visualization_msgs::msg::Marker::CUBE;
-    marker.action = visualization_msgs::msg::Marker::ADD;
-    marker.lifetime = rclcpp::Duration::from_seconds(0.5);
-    marker.ns = "center";
-    marker.pose.position.x = detection_center.x();
-    marker.pose.position.y = detection_center.y();
-    marker.pose.position.z = detection_center.z();
-    marker.pose.orientation.w = 1.0;
-    marker.scale.x = parameters_.reflector_radius;
-    marker.scale.y = parameters_.reflector_radius;
-    marker.scale.z = parameters_.reflector_radius;
-    marker.color.a = 0.6;
-    marker.color.r = 1.0;
-    marker.color.g = 0.0;
-    marker.color.b = 1.0;
-    radar_detections_marker_array.markers.push_back(marker);
-
-    // For 2D radar detection to represent that it has no z values.
-    if (
-      transformation_type_ == TransformationType::svd_2d ||
-      transformation_type_ == TransformationType::yaw_only_rotation_2d) {
-      geometry_msgs::msg::Point p1, p2;
-      p1.z -= 0.5;
-      p2.z += 0.5;
-      marker.type = visualization_msgs::msg::Marker::LINE_STRIP;
-      marker.ns = "line";
-      marker.scale.x = 0.2 * parameters_.reflector_radius;
-      marker.scale.y = 0.2 * parameters_.reflector_radius;
-      marker.scale.z = 0.2 * parameters_.reflector_radius;
-      marker.points.push_back(p1);
-      marker.points.push_back(p2);
-      radar_detections_marker_array.markers.push_back(marker);
-    }
-  }
-
-  radar_detections_pub_->publish(radar_detections_marker_array);
-
-  visualization_msgs::msg::MarkerArray matches_marker_array;
-
-  for (std::size_t match_index = 0; match_index < matched_detections.size(); match_index++) {
-    const auto & [lidar_detection, radar_detection] = matched_detections[match_index];
-    const auto lidar_detection_transformed = initial_radar_to_lidar_eigen_ * lidar_detection;
-
-    visualization_msgs::msg::Marker marker;
-    marker.header = radar_header_;
-    marker.id = match_index;
-    marker.type = visualization_msgs::msg::Marker::LINE_STRIP;
-    marker.action = visualization_msgs::msg::Marker::ADD;
-    marker.lifetime = rclcpp::Duration::from_seconds(0.5);
-    marker.ns = "match";
-    marker.pose.orientation.w = 1.0;
-    marker.scale.x = 0.02;
-    marker.scale.y = 0.02;
-    marker.scale.z = 0.02;
-    marker.color.a = 0.6;
-    marker.color.r = 1.0;
-    marker.color.g = 0.0;
-    marker.color.b = 1.0;
-    marker.points.push_back(eigenToPointMsg(lidar_detection_transformed));
-    marker.points.push_back(eigenToPointMsg(radar_detection));
-    matches_marker_array.markers.push_back(marker);
-  }
-
-  matches_markers_pub_->publish(matches_marker_array);
-}
-
-void ExtrinsicReflectorBasedCalibrator::visualizeTrackMarkers()
-{
-  auto add_track_markers = [&](
-                             const Eigen::Vector3d & lidar_estimation,
-                             const Eigen::Vector3d & radar_estimation_transformed, Track track,
-                             const std::string ns, const std_msgs::msg::ColorRGBA & color,
-                             std::vector<visualization_msgs::msg::Marker> & markers) {
-    visualization_msgs::msg::Marker marker;
-
-    marker.header = lidar_header_;
-    marker.id = markers.size();
-    marker.type = visualization_msgs::msg::Marker::LINE_STRIP;
-    marker.action = visualization_msgs::msg::Marker::ADD;
-    marker.ns = ns;
-    marker.pose.orientation.w = 1.0;
-    marker.scale.x = 0.2 * parameters_.reflector_radius;
-    marker.scale.y = 0.2 * parameters_.reflector_radius;
-    marker.scale.z = 0.2 * parameters_.reflector_radius;
-    marker.color = color;
-    marker.points.push_back(eigenToPointMsg(radar_estimation_transformed));
-    marker.points.push_back(eigenToPointMsg(lidar_estimation));
-    markers.push_back(marker);
-
-    marker.id = markers.size();
-    marker.type = visualization_msgs::msg::Marker::CUBE;
-    marker.pose.position = eigenToPointMsg(radar_estimation_transformed);
-    marker.pose.orientation.w = 1.0;
-    marker.scale.x = parameters_.reflector_radius;
-    marker.scale.y = parameters_.reflector_radius;
-    marker.scale.z = parameters_.reflector_radius;
-    marker.points.clear();
-    markers.push_back(marker);
-
-    // For 2D radar detection to represent that it has no z values.
-    if (
-      transformation_type_ == TransformationType::svd_2d ||
-      transformation_type_ == TransformationType::yaw_only_rotation_2d) {
-      marker.id = markers.size();
-      marker.type = visualization_msgs::msg::Marker::LINE_STRIP;
-      marker.scale.x = 0.2 * parameters_.reflector_radius;
-      marker.scale.y = 0.2 * parameters_.reflector_radius;
-      marker.scale.z = 0.2 * parameters_.reflector_radius;
-      marker.points.push_back(eigenToPointMsg(Eigen::Vector3d(0.0, 0.0, -0.5)));
-      marker.points.push_back(eigenToPointMsg(Eigen::Vector3d(0.0, 0.0, 0.5)));
-      markers.push_back(marker);
-    }
-
-    marker.id = markers.size();
-    marker.type = visualization_msgs::msg::Marker::CUBE;
-    marker.pose.position = eigenToPointMsg(lidar_estimation);
-    marker.pose.orientation.w = 1.0;
-    marker.scale.x = parameters_.reflector_radius;
-    marker.scale.y = parameters_.reflector_radius;
-    marker.scale.z = parameters_.reflector_radius;
-    marker.color.r = 1.0;
-    marker.color.g = 1.0;
-    marker.color.b = 1.0;
-    marker.points.clear();
-    markers.push_back(marker);
-
-    if (ns == "calibrated") {
-      marker.id = markers.size();
-      marker.type = visualization_msgs::msg::Marker::TEXT_VIEW_FACING;
-      marker.pose.position = eigenToPointMsg(lidar_estimation + Eigen::Vector3d(0, 0, 1));
-      marker.scale.z = 0.3;
-      marker.color.r = 1.0;
-      marker.color.g = 0.0;
-      marker.color.b = 0.0;
-      marker.color.a = 1.0;
-      marker.text = "\n ID:" + std::to_string(track.id) + "\n dist_err" +
-                    toStringWithPrecision(track.distance_error, 2) +
-                    "\n yaw_err=" + toStringWithPrecision(track.yaw_error, 2);
-      markers.push_back(marker);
-    }
-  };
-
-  // Visualization
-  visualization_msgs::msg::MarkerArray tracking_marker_array;
-  std_msgs::msg::ColorRGBA initial_color;
-  initial_color.r = 1.0;
-  initial_color.a = 1.0;
-
-  std_msgs::msg::ColorRGBA calibrated_color;
-  calibrated_color.g = 1.0;
-  calibrated_color.a = 1.0;
-
-  for (const auto & track : converged_tracks_) {
-    const auto initial_radar_estimation_transformed =
-      initial_radar_to_lidar_eigen_.inverse() * track.radar_estimation;
-    const auto calibrated_radar_estimation_transformed =
-      calibrated_radar_to_lidar_eigen_.inverse() * track.radar_estimation;
-
-    add_track_markers(
-      track.lidar_estimation, initial_radar_estimation_transformed, track, "initial", initial_color,
-      tracking_marker_array.markers);
-    add_track_markers(
-      track.lidar_estimation, calibrated_radar_estimation_transformed, track, "calibrated",
-      calibrated_color, tracking_marker_array.markers);
-  }
-
-  tracking_markers_pub_->publish(tracking_marker_array);
-}
-
-void ExtrinsicReflectorBasedCalibrator::deleteTrackMarkers()
-{
-  visualization_msgs::msg::MarkerArray tracking_marker_array;
-  visualization_msgs::msg::Marker marker;
-
-  for (size_t i = 0; i < converged_tracks_.size() * marker_size_per_track_; i++) {
-    marker.id = i;
-    marker.ns = "initial";
-    marker.action = visualization_msgs::msg::Marker::DELETE;
-    tracking_marker_array.markers.push_back(marker);
-
-    marker.ns = "calibrated";
-    marker.action = visualization_msgs::msg::Marker::DELETE;
-    tracking_marker_array.markers.push_back(marker);
-  }
-
-  // Publish the updated marker array to delete specific markers
-  tracking_markers_pub_->publish(tracking_marker_array);
-}
-
-void ExtrinsicReflectorBasedCalibrator::drawCalibrationStatusText()
-{
-  visualization_msgs::msg::Marker text_marker;
-
-  text_marker.id = 0;
-  text_marker.header = lidar_header_;
-  text_marker.type = visualization_msgs::msg::Marker::TEXT_VIEW_FACING;
-  text_marker.color.r = 1.0;
-  text_marker.color.g = 1.0;
-  text_marker.color.b = 1.0;
-  text_marker.color.a = 1.0;
-  text_marker.ns = "calibration_status";
-  text_marker.scale.z = 0.3;
-
-  // show the latest cross validation results which is located in the last two elements of the
-  // metrics vector show the latest calibration result, which is located in the 2nd and 3rd index of
-  // the metrics vector
-  constexpr double m_to_cm = 100.0;
-
-  if (converged_tracks_.empty()) {
-    text_marker.text = " pairs=" + std::to_string(converged_tracks_.size());
-  } else {
-    text_marker.text = " pairs=" + std::to_string(converged_tracks_.size());
-
-    for (const auto & [type, metrics] : output_metrics_.methods) {
-      // Display average errors
-      text_marker.text += "\n " + toString(type) + ": average_distance_error[cm]=" +
-                          toStringWithPrecision(metrics.calibrated_distance_error * m_to_cm, 2) +
-                          "\n " + toString(type) + ": average_yaw_error[deg]=" +
-                          toStringWithPrecision(metrics.calibrated_yaw_error, 2);
-
-      // Display cross-validation errors
-      if (converged_tracks_.size() > 3) {
-        text_marker.text +=
-          "\n " + toString(type) + ": crossval_distance_error[cm]=" +
-          toStringWithPrecision(
-            metrics.avg_crossval_calibrated_distance_error.back() * m_to_cm, 2) +
-          "\n " + toString(type) + ": crossval_yaw_error[deg]=" +
-          toStringWithPrecision(metrics.avg_crossval_calibrated_yaw_error.back(), 2);
-      }
-    }
-  }
-  text_marker.pose.position.x = 1.0;
-  text_marker.pose.position.y = 1.0;
-  text_marker.pose.position.z = 1.0;
-  text_marker.pose.orientation.x = 0.0;
-  text_marker.pose.orientation.y = 0.0;
-  text_marker.pose.orientation.z = 0.0;
-  text_marker.pose.orientation.w = 1.0;
-
-  text_markers_pub_->publish(text_marker);
-}
-
-geometry_msgs::msg::Point ExtrinsicReflectorBasedCalibrator::eigenToPointMsg(
-  const Eigen::Vector3d & p_eigen)
-{
-  geometry_msgs::msg::Point p;
-  p.x = p_eigen.x();
-  p.y = p_eigen.y();
-  p.z = p_eigen.z();
-  return p;
-}
-
-double ExtrinsicReflectorBasedCalibrator::getDistanceError(Eigen::Vector3d v1, Eigen::Vector3d v2)
-{
-  if (
-    transformation_type_ == TransformationType::svd_2d ||
-    transformation_type_ == TransformationType::yaw_only_rotation_2d) {
-    v1.z() = 0.0;
-    v2.z() = 0.0;
-  }
-  return (v1 - v2).norm();
-}
-
-double ExtrinsicReflectorBasedCalibrator::getYawError(Eigen::Vector3d v1, Eigen::Vector3d v2)
-{
-  v1.z() = 0.0;
-  v2.z() = 0.0;
-  return std::abs(std::acos(v1.dot(v2) / (v1.norm() * v2.norm())));
-}
-
-geometry_msgs::msg::Point ExtrinsicReflectorBasedCalibrator::eigenToPoint(
-  const Eigen::Vector3d & eigen_vector)
-{
-  geometry_msgs::msg::Point point;
-  point.x = eigen_vector.x();
-  point.y = eigen_vector.y();
-  point.z = eigen_vector.z();
-  return point;
-}
-
-void ExtrinsicReflectorBasedCalibrator::updateTrackIds()
-{
-  for (size_t i = 0; i < converged_tracks_.size(); ++i) {
-    converged_tracks_[i].id = i + 1;  // Reassign IDs starting from 1
-  }
-}
-
-std::string ExtrinsicReflectorBasedCalibrator::toStringWithPrecision(const float value, const int n)
-{
-  std::ostringstream out;
-  out.precision(n);
-  out << std::fixed << value;
-  return out.str();
 }
 
 }  // namespace marker_radar_lidar_calibrator
