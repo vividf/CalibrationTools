@@ -6,23 +6,25 @@ A tutorial for this calibrator can be found [here](../../docs/tutorials/marker_r
 
 The package `marker_radar_lidar_calibrator` performs extrinsic calibration between radar and 3d lidar sensors used in autonomous driving and robotics.
 
-Currently, the calibrator only supports radars whose detection interface includes distance and azimuth angle, but do not offer elevation angle. For example, ARS408 radars can be calibrated with this tool. Also, note that the 3d lidar should have a high enough resolution to present several returns on the [radar reflector](#radar-reflector) (calibration target).
+The calibrator supports radars whose detection interface includes distance, azimuth angle, and elevation angle, such as the ARS548. It also supports radars that provide distance and azimuth angle but lack elevation angle capability, such as the ARS408.
+
+Also, note that the 3d lidar should have a high enough resolution to present several returns on the [radar reflector](#radar-reflector) (calibration target).
 
 ## Inner-workings / Algorithms
 
-The calibrator computes the center of the reflectors from the pointcloud and pairs them to the radar objects/tracks. Afterwards, both an SVD-based and a yaw-only rotation estimation algorithm are applied to these matched points to estimate the rigid transformation between sensors.
+The calibrator computes the center of the reflectors from the pointcloud and pairs them to the radar objects/tracks. Afterward, estimation algorithms are applied to these matched points to estimate the rigid transformation between sensors.
 
-Due to the complexity of the problem, the process in split in the following steps: constructing a background model, extracting the foreground to detect reflectors, matching and filtering the lidar and radar detections, and estimating the rigid transformation between the radar and lidar sensors.
+Due to the complexity of the problem, the process is split into the following steps: constructing a background model, extracting the foreground to detect reflectors, matching and filtering the lidar and radar detections, and estimating the rigid transformation between the radar and lidar sensors.
 
-In what follows, we proceed to explain each step, making a point to put emphasis on the parts that the user must take into consideration to use phis package effectively.
+In what follows, we proceed to explain each step, making a point to put emphasis on the parts that the user must take into consideration to use this package effectively.
 
 \*Note: although the radar can provide either detections and/or objects/tracks, we treat them as points in this package, and as such may refer to the radar pointcloud when needed.
 
 ### Step 1: Background model construction
 
-Detecting corner reflectors in an unknown environment, without imposing impractical restrictions on the reflectors themselves, the operators, or the environment, it a challenging problem. From the perspective of the lidar, radar reflectors may be confused with the floor or other metallic objects, and from the radar's perspective, although corner reflectors are detected by the sensor (the user must confirm it themselves before attempting to use this tool!), other objects are also detected, with no practical way to tell them apart most of the time.
+Detecting corner reflectors in an unknown environment, without imposing impractical restrictions on the reflectors themselves, the operators, or the environment, is a challenging problem. From the perspective of the lidar, radar reflectors may be confused with the floor or other metallic objects, and from the radar's perspective, although corner reflectors are detected by the sensor (the user must confirm it themselves before attempting to use this tool!), other objects are also detected, with no practical way to tell them apart most of the time.
 
-For these reasons, we avoid addressing the full problem an instead leverage the use of background models. To do this, the user must first present the sensors an environment with no radar reflectors nor any dynamic objects (mostly persons) in the space that is to be used for calibration. The tool will collect data for a set period of time or until there is no new information. For each modality, this data is then turned into voxels, marking the space of each occupied voxel as `background` in the following steps.
+For these reasons, we avoid addressing the full problem and instead leverage the use of background models. To do this, the user must first present the sensors an environment with no radar reflectors nor any dynamic objects (mostly persons) in the space that is to be used for calibration. The tool will collect data for a set period of time or until there is no new information. For each modality, this data is then turned into voxels, marking the space of each occupied voxel as `background` in the following steps.
 
 ### Step 2: Foreground extraction and reflector detection
 
@@ -55,7 +57,7 @@ Once background model construction finishes and the foreground extraction proces
 
 ### Step 3: Matching and filtering
 
-The output of the previous step consists of two lists of points of potentials radar reflector candidates for each sensor. However, it is not possible to directly match points among these lists, and they are expected to contain a high number of false positives on both sensors.
+The output of the previous step consists of two lists of points of potential radar reflector candidates for each sensor. However, it is not possible to directly match points among these lists, and they are expected to contain a high number of false positives on both sensors.
 
 To address this issue, we rely on a heuristic that leverages the accuracy of initial calibration. Usually, robot/vehicle CAD designs allow an initial calibration with an accuracy of a few centimeters/degrees, and direct sensor calibration is only used to refine it.
 
@@ -67,19 +69,21 @@ Once matches' estimations converge (using a covariance matrix criteria), they ar
 
 ### Step 4: Rigid transformation estimation
 
-After matching detection pairs, we apply rigid transformation estimation algorithms to those pairs to estimate the transformation between the radar and lidar sensors. We currently support four algorithms: 2d SVD-based method, yaw-only rotation method, 3d zero roll SVD-based method, and 3d SVD-based method.
+After matching detection pairs, we apply rigid transformation estimation algorithms to those pairs to estimate the transformation between the radar and lidar sensors. Currently, we support four algorithms: the 2d SVD-based method, the yaw-only rotation method, the 3d zero-roll SVD-based method, and the 3d SVD method.
+
+The 2d SVD-based method and the yaw-only rotation method are designed for radars that provide distance and azimuth angle measurements but lack elevation angle capability, such as the ARS408. In contrast, the 3d zero-roll SVD-based method and the 3d SVD method are suited for radars that include distance, azimuth angle, and elevation angle in their detection interface, such as the ARS548.
 
 ### 2d SVD-based method
 
 In this method, we reduce the problem to a 2d transformation estimation since radar detections lack a z component (elevation is fixed to zero).
 
-However, because lidar detections are in the lidar frame and likely involve a 3d transformation (non-zero roll and\or pitch) to the radar frame, we transform the lidar detections to a frame dubbed the `radar parallel` frame and then set their z component to zero. The `radar parallel` frame has only a 2d transformation (x, y, yaw) relative to the radar frame. By dropping the z-component we explicitly give up on computing a 3D pose, which was not possible due to the nature of the radar.
+However, because lidar detections are in the lidar frame and likely involve a 3d transformation (non-zero roll and\or pitch) to the radar frame, we transform the lidar detections to a frame dubbed the `radar optimization` frame and then set their z component to zero. The `radar optimization` frame has only a 2d transformation (x, y, yaw) relative to the radar frame. By dropping the z-component we explicitly give up on computing a 3d pose, which was not possible due to the nature of the radar.
 
-In autonomous vehicles, radars are mounted in a way designed to minimize pitch and roll angles, maximizing their performance and measurement range. This means the radar sensors are aligned as parallel as possible to the ground plane, making the `base_link` a suitable choice for the `radar parallel` frame.
+In autonomous vehicles, radars are mounted in a way designed to minimize pitch and roll angles, maximizing their performance and measurement range. This means the radar sensors are aligned as parallel as possible to the ground plane, making the `base_link` a suitable choice for the `radar optimization` frame.
 
-\*\*Note: this assumes that the lidar to `radar parallel` frame is either hardcoded or previously calibrated
+\*\*Note: this assumes that the lidar to `radar optimization` frame is either hardcoded or previously calibrated
 
-Next, we apply the SVD-based rigid transformation estimation algorithm between the lidar detections in the radar parallel frame and the radar detections in the radar frame. This allows us to estimate the transformation between the lidar and radar by multiplying the radar-to-radar-parallel transformation (calibrated) with the radar-parallel-to-lidar transformation (known before-handed). The SVD-based algorithm, provided by PCL, leverages SVD to find the optimal rotation component and then computes the translation component based on the rotation.
+Next, we apply the SVD-based rigid transformation estimation algorithm between the lidar detections in the radar optimization frame and the radar detections in the radar frame. This allows us to estimate the transformation between the lidar and radar by multiplying the radar-to-radar-parallel transformation (calibrated) with the radar-parallel-to-lidar transformation (known before-handed). The SVD-based algorithm, provided by PCL, leverages SVD to find the optimal rotation component and then computes the translation component based on the rotation.
 
 ### Yaw-only rotation method
 
@@ -89,46 +93,51 @@ Generally, the 2d SVD-based method is preferred when valid; otherwise, the yaw-o
 
 ### 3d zero roll SVD-based method
 
-TBD.
+This method is designed for radars that provide distance, azimuth angle, and elevation angle, but requires the roll angle to be fixed at zero relatives to the `radar optimization` frame / `base_link`.
+We apply the 3d SVD-based rigid transformation estimation algorithm to optimize the pitch, yaw, and translation components while explicitly fixing the roll angle to zero. The optimization is performed between the LiDAR detections in the radar optimization frame and the radar detections in the radar frame.
 
-### 3d SVD-based method
+### 3d SVD method
 
-TBD.
+This method applies to radars that provide distance, azimuth angle, and elevation angle without making any assumptions about the roll, pitch, or yaw angles.
+
+The 3d SVD rigid transformation estimation algorithm is directly applied to the lidar detections in the radar optimization frame and the radar detections in the radar frame, optimizing the complete 3d transformation, including roll, pitch, yaw, and translation components.
 
 ## ROS Interfaces
 
 ### Input
 
-| Name                     | Type                            | Description               |
-| ------------------------ | ------------------------------- | ------------------------- |
-| `input_lidar_pointcloud` | `sensor_msgs::msg::PointCloud2` | Lidar pointcloud's topic. |
-| `input_radar_msg`        | `radar_msgs::msg::RadarTracks`  | Radar objects' topic.     |
+| Name                     | Type                                                                                            | Description                                  |
+| ------------------------ | ----------------------------------------------------------------------------------------------- | -------------------------------------------- |
+| `input_lidar_pointcloud` | `sensor_msgs::msg::PointCloud2`                                                                 | Topic for the lidar pointcloud.              |
+| `input_radar_msg`        | `radar_msgs::msg::RadarTracks` / `radar_msgs::msg::RadarScan` / `sensor_msgs::msg::PointCloud2` | Topic for radar tracks, scan, or pointcloud. |
 
 ### Output
 
-| Name                          | Type                                   | Description                                               |
-| ----------------------------- | -------------------------------------- | --------------------------------------------------------- |
-| `lidar_background_pointcloud` | `sensor_msgs::msg::PointCloud2`        | Lidar's background pointcloud.                            |
-| `lidar_foreground_pointcloud` | `sensor_msgs::msg::PointCloud2`        | Lidar's foreground pointcloud.                            |
-| `lidar_colored_clusters`      | `sensor_msgs::msg::PointCloud2`        | Lidar's colored pointcloud clusters.                      |
-| `lidar_detection_markers`     | `visualization_msgs::msg::MarkerArray` | Lidar detections.                                         |
-| `radar_background_pointcloud` | `sensor_msgs::msg::PointCloud2`        | Radar's background pointcloud from the radar.             |
-| `radar_foreground_pointcloud` | `sensor_msgs::msg::PointCloud2`        | Radar's foreground pointcloud from the radar.             |
-| `radar_detection_markers`     | `visualization_msgs::msg::MarkerArray` | Radar detections.                                         |
-| `matches_markers`             | `visualization_msgs::msg::MarkerArray` | Matched lidar and radar detections.                       |
-| `tracking_markers`            | `visualization_msgs::msg::MarkerArray` | Reflectors' tracks.                                       |
-| `text_markers`                | `visualization_msgs::msg::Marker`      | Calibration metrics' markers.                             |
-| `calibration_metrics`         | `std_msgs::msg::Float32MultiArray`     | Calibration metrics as vector for visualization purposes. |
+| Name                          | Type                                                 | Description                                               |
+| ----------------------------- | ---------------------------------------------------- | --------------------------------------------------------- |
+| `lidar_background_pointcloud` | `sensor_msgs::msg::PointCloud2`                      | Lidar's background pointcloud.                            |
+| `lidar_foreground_pointcloud` | `sensor_msgs::msg::PointCloud2`                      | Lidar's foreground pointcloud.                            |
+| `lidar_colored_clusters`      | `sensor_msgs::msg::PointCloud2`                      | Lidar's colored pointcloud clusters.                      |
+| `lidar_detection_markers`     | `visualization_msgs::msg::MarkerArray`               | Lidar detections.                                         |
+| `radar_background_pointcloud` | `sensor_msgs::msg::PointCloud2`                      | Radar's background pointcloud from the radar.             |
+| `radar_foreground_pointcloud` | `sensor_msgs::msg::PointCloud2`                      | Radar's foreground pointcloud from the radar.             |
+| `radar_detection_markers`     | `visualization_msgs::msg::MarkerArray`               | Radar detections.                                         |
+| `matches_markers`             | `visualization_msgs::msg::MarkerArray`               | Matched lidar and radar detections.                       |
+| `tracking_markers`            | `visualization_msgs::msg::MarkerArray`               | Reflectors' tracks.                                       |
+| `text_markers`                | `visualization_msgs::msg::Marker`                    | Calibration metrics' markers.                             |
+| `calibration_metrics`         | `tier4_calibration_msgs::msg::` `CalibrationMetrics` | Calibration metrics as vector for visualization purposes. |
 
 ### Services
 
-| Name                       | Type                                                  | Description                                                                                          |
-| -------------------------- | ----------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| `extrinsic_calibration`    | `tier4_calibration_msgs::` `srv::ExtrinsicCalibrator` | Generic calibration service. The call is blocked until the calibration process finishes.             |
-| `extract_background_model` | `std_srvs::srv::Empty`                                | Starts to extract the background model from radar and lidar data.                                    |
-| `add_lidar_radar_pair`     | `std_srvs::srv::Empty`                                | Adds lidar-radar pairs for calibration.                                                              |
-| `delete_lidar_radar_pair`  | `std_srvs::srv::Empty`                                | Deletes the latest lidar-radar pair.                                                                 |
-| `send_calibration`         | `std_srvs::srv::Empty`                                | Finishes the calibration process and sends the calibration result to the sensor calibration manager. |
+| Name                       | Type                                                   | Description                                                                                          |
+| -------------------------- | ------------------------------------------------------ | ---------------------------------------------------------------------------------------------------- |
+| `extrinsic_calibration`    | `tier4_calibration_msgs::` `srv::ExtrinsicCalibrator`  | Generic calibration service. The call is blocked until the calibration process finishes.             |
+| `extract_background_model` | `std_srvs::srv::Empty`                                 | Starts to extract the background model from radar and lidar data.                                    |
+| `add_lidar_radar_pair`     | `std_srvs::srv::Empty`                                 | Adds lidar-radar pairs for calibration.                                                              |
+| `delete_lidar_radar_pair`  | `tier4_calibration_msgs::` `srv::DeleteLidarRadarPair` | Deletes the LiDAR-radar pair with the specified ID.                                                  |
+| `send_calibration`         | `std_srvs::srv::Empty`                                 | Finishes the calibration process and sends the calibration result to the sensor calibration manager. |
+| `load_database`            | `tier4_calibration_msgs::srv::FileSrv`                 | Loads the matched lidar and radar pairs from a file.                                                 |
+| `save_database`            | `tier4_calibration_msgs::srv::FileSrv`                 | Saves the matched lidar and radar pairs to a file.                                                   |
 
 ## Parameters
 
@@ -136,9 +145,9 @@ TBD.
 
 | Name                                        | Type          | Default Value                                                 | Description                                                                                                                                                                                                                                                                                                                                             |
 | ------------------------------------------- | ------------- | ------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `radar_parallel_frame`                      | `std::string` | `base_link`                                                   | Auxiliar frame used in the 2d SVD-based method.                                                                                                                                                                                                                                                                                                         |
+| `radar_optimization_frame`                  | `std::string` | `base_link`                                                   | Auxiliar frame used in the 2d SVD-based method, 3d zero roll SVD-based method and 3d svd method.                                                                                                                                                                                                                                                        |
 | `msg_type`                                  | `std::string` | `radar_tracks` / `radar_scan` / `radar_cloud`                 | The type of input radar objects.                                                                                                                                                                                                                                                                                                                        |
-| `transformation_type`                       | `std::string` | `yaw_only_rotation_2d` / `svd_2d` / `svd_3d` / `roll_zero_3d` | Specifies the algorithm used to optimize the transformation between the radar frame and the radar parallel frame.                                                                                                                                                                                                                                       |
+| `transformation_type`                       | `std::string` | `yaw_only_rotation_2d` / `svd_2d` / `svd_3d` / `roll_zero_3d` | Specifies the algorithm used to optimize the transformation between the radar frame and the radar optimization frame.                                                                                                                                                                                                                                   |
 | `use_lidar_initial_crop_box_filter`         | `bool`        | `true`                                                        | Enables or disables the initial cropping filter for lidar data processing.                                                                                                                                                                                                                                                                              |
 | `lidar_initial_crop_box_min_x`              | `double`      | `-50.0`                                                       | Minimum x-coordinate in meters for the initial lidar calibration area.                                                                                                                                                                                                                                                                                  |
 | `lidar_initial_crop_box_min_y`              | `double`      | `-50.0`                                                       | Minimum y-coordinate in meters for the initial lidar calibration area.                                                                                                                                                                                                                                                                                  |
@@ -192,9 +201,7 @@ It is recommended that the user mount the radar reflector on a tripod and ensure
 
 - While extracting the background model, ensure that no reflector, person, or moving object is present in the calibration area.
 
-- The calibrator provides a button to delete any mismatched pairs (e.g., an object detected by both radar and lidar). However, some outliers may not be easily detectable by human eyes, leading to inaccurate results as the calibration proceeds even with these anomalies present. Future enhancements will aim to improve outlier detection, thereby refining the calibration accuracy.
-
-- The calibrator should be able to handle different lidar and radar sensors. So far, We calibrated the Velodyne VLS-128 lidar sensor, Pandar-40P lidar sensor, and ARS 408 radar sensor with good calibration results.
+- The calibrator should be able to handle different lidar and radar sensors. So far, We calibrated the Velodyne VLS-128 lidar sensor, Pandar-40P lidar sensor, ARS 408 radar sensor, and ARS 548 radar sensor with good calibration results.
 
 ## Pro tips/recommendations
 
