@@ -25,12 +25,12 @@ namespace marker_radar_lidar_calibrator
 
 void Visualization::setParameters(VisualizationParamters params) { params_ = params; }
 
-Markers Visualization::visualizationMarkers(
+DetectionMarkers Visualization::visualizeDetectionMarkers(
   const std::vector<Eigen::Vector3d> & lidar_detections,
   const std::vector<Eigen::Vector3d> & radar_detections,
   const std::vector<std::pair<Eigen::Vector3d, Eigen::Vector3d>> & matched_detections)
 {
-  Markers output_markers;
+  DetectionMarkers detection_markers;
   for (std::size_t detection_index = 0; detection_index < lidar_detections.size();
        detection_index++) {
     const auto & detection_center = lidar_detections[detection_index];
@@ -51,7 +51,7 @@ Markers Visualization::visualizationMarkers(
     marker.color.r = 0.0;
     marker.color.g = 0.0;
     marker.color.b = 1.0;
-    output_markers.lidar_detections_marker_array.markers.push_back(marker);
+    detection_markers.lidar_detections_marker_array.markers.push_back(marker);
   }
 
   // Radar makers
@@ -76,7 +76,7 @@ Markers Visualization::visualizationMarkers(
     marker.color.r = 1.0;
     marker.color.g = 0.0;
     marker.color.b = 1.0;
-    output_markers.radar_detections_marker_array.markers.push_back(marker);
+    detection_markers.radar_detections_marker_array.markers.push_back(marker);
 
     // For 2D radar detection to represent that it has no z values.
     if (
@@ -92,7 +92,7 @@ Markers Visualization::visualizationMarkers(
       marker.scale.z = 0.2 * params_.reflector_radius;
       marker.points.push_back(p1);
       marker.points.push_back(p2);
-      output_markers.radar_detections_marker_array.markers.push_back(marker);
+      detection_markers.radar_detections_marker_array.markers.push_back(marker);
     }
   }
 
@@ -117,10 +117,10 @@ Markers Visualization::visualizationMarkers(
     marker.color.b = 1.0;
     marker.points.push_back(eigenToPointMsg(lidar_detection_transformed));
     marker.points.push_back(eigenToPointMsg(radar_detection));
-    output_markers.matches_marker_array.markers.push_back(marker);
+    detection_markers.matches_marker_array.markers.push_back(marker);
   }
 
-  return output_markers;
+  return detection_markers;
 }
 
 visualization_msgs::msg::MarkerArray Visualization::visualizeTrackMarkers(

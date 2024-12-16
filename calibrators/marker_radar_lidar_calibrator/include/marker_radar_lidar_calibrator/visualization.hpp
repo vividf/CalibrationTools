@@ -36,7 +36,7 @@ struct VisualizationParamters
   Eigen::Isometry3d initial_radar_to_lidar_eigen;
 };
 
-struct Markers
+struct DetectionMarkers
 {
   visualization_msgs::msg::MarkerArray lidar_detections_marker_array;
   visualization_msgs::msg::MarkerArray radar_detections_marker_array;
@@ -50,7 +50,7 @@ public:
   ~Visualization() = default;
 
   void setParameters(VisualizationParamters params);
-  Markers visualizationMarkers(
+  DetectionMarkers visualizeDetectionMarkers(
     const std::vector<Eigen::Vector3d> & lidar_detections,
     const std::vector<Eigen::Vector3d> & radar_detections,
     const std::vector<std::pair<Eigen::Vector3d, Eigen::Vector3d>> & matched_detections);
@@ -63,9 +63,8 @@ public:
     const size_t converged_tracks_size,
     std::unordered_map<TransformationType, CalibrationErrorMetrics> methods);
 
-  VisualizationParamters params_;
-
 private:
+  VisualizationParamters params_;
   static constexpr double m_to_cm = 100.0;
 };
 

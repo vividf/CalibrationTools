@@ -1,5 +1,19 @@
 #!/usr/bin/env python3
 
+# Copyright 2024 TIER IV, Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import math
 
 import matplotlib.pyplot as plt
@@ -22,8 +36,8 @@ class MetricsPlotter:
         # Define plot colors and styles
         self.color_distance_o = "C0o-"  # Circle marker, solid line for distance
         self.color_yaw_o = "C1o-"  # Circle marker, solid line for yaw
-        self.color_distance = "C0"  # Solid color for distance (e.g., fill areas)
-        self.color_yaw = "C1"  # Solid color for yaw (e.g., fill areas)
+        self.color_distance = "C0"
+        self.color_yaw = "C1"
 
     def initialize_figure(self, methods):
         num_rows = len(methods) + 1  # 1 row for distributions
@@ -185,7 +199,7 @@ class MetricsPlotter:
         # Define bin intervals
         range_bin_width = 5  # Interval of 5 meters
         pitch_bin_width = 0.2  # Interval of 0.2 degrees
-        yaw_bin_width = 10  # Interval of 3 degrees
+        yaw_bin_width = 10  # Interval of 10 degrees
 
         # Create discrete bins
         range_bins = np.arange(

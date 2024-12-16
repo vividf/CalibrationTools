@@ -204,7 +204,7 @@ protected:
     double max_initial_calibration_translation_error;
     double max_initial_calibration_rotation_error;
     std::size_t max_number_of_combination_samples;
-    int match_count_for_convergence;
+    int min_frames_for_convergence;
     std::size_t reflector_points_threshold;
   } parameters_;
 
@@ -290,7 +290,7 @@ protected:
   // Tracking
   bool tracking_active_{false};
   int current_new_tracks_{false};
-  int count_{0};
+  int num_of_frame_{0};
   std::vector<std::vector<Track>> converging_tracks_;
   std::vector<Track> converged_tracks_;
 

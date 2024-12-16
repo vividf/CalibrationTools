@@ -48,6 +48,7 @@ public:
   void estimateZeroRollTransformation();
   Eigen::Isometry3d getTransformation();
 
+private:
   double delta_cos_;
   double delta_sin_;
   pcl::PointCloud<common_types::PointType>::Ptr lidar_points_ocs_;
