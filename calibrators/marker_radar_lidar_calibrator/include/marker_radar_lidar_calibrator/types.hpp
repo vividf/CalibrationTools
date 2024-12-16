@@ -73,18 +73,6 @@ struct TransformationResult
   std::unordered_map<TransformationType, Eigen::Isometry3d>
     calibrated_radar_to_lidar_transformations;
 
-  void initializeTransformations()
-  {
-    calibrated_radar_to_lidar_transformations[TransformationType::svd_2d] =
-      Eigen::Isometry3d::Identity();
-    calibrated_radar_to_lidar_transformations[TransformationType::yaw_only_rotation_2d] =
-      Eigen::Isometry3d::Identity();
-    calibrated_radar_to_lidar_transformations[TransformationType::svd_3d] =
-      Eigen::Isometry3d::Identity();
-    calibrated_radar_to_lidar_transformations[TransformationType::zero_roll_3d] =
-      Eigen::Isometry3d::Identity();
-  }
-
   void clear()
   {
     lidar_points_ocs.reset();
@@ -128,15 +116,6 @@ struct OutputMetrics
       metrics.clear();
     }
     detections.clear();
-  }
-
-  void initializeMethods()
-  {
-    methods.clear();
-    methods[TransformationType::svd_2d] = CalibrationErrorMetrics();
-    methods[TransformationType::yaw_only_rotation_2d] = CalibrationErrorMetrics();
-    methods[TransformationType::svd_3d] = CalibrationErrorMetrics();
-    methods[TransformationType::zero_roll_3d] = CalibrationErrorMetrics();
   }
 };
 

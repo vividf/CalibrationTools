@@ -215,7 +215,7 @@ class CalibratorUI(QMainWindow):
             return
 
         self.pending_service = True
-        self.ros_interface.delete_lidar_radar_pair(pair_id)  # Pass the integer pair_id
+        self.ros_interface.delete_lidar_radar_pair(pair_id)
         self.check_status()
 
     def send_calibration_button_callback(self):

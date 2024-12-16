@@ -111,7 +111,7 @@ rcl_interfaces::msg::SetParametersResult ExtrinsicReflectorBasedCalibrator::para
     UPDATE_PARAM(p, max_initial_calibration_translation_error);
     UPDATE_PARAM(p, max_initial_calibration_rotation_error);
     UPDATE_PARAM(p, max_number_of_combination_samples);
-    UPDATE_PARAM(p, match_count_for_convergence);
+    UPDATE_PARAM(p, min_frames_for_convergence);
     UPDATE_PARAM(p, reflector_points_threshold);
 
     // transaction succeeds, now assign values
@@ -180,11 +180,11 @@ ExtrinsicReflectorBasedCalibrator::ExtrinsicReflectorBasedCalibrator(
   parameters_.max_calibration_range =
     this->declare_parameter<double>("max_calibration_range", 50.0);
   parameters_.background_model_timeout =
-    this->declare_parameter<double>("background_model_timeout", 3.0);
+    this->declare_parameter<double>("background_model_timeout", 5.0);
   parameters_.min_foreground_distance =
     this->declare_parameter<double>("min_foreground_distance", 0.4);
   parameters_.background_extraction_timeout =
-    this->declare_parameter<double>("background_extraction_timeout", 5.0);
+    this->declare_parameter<double>("background_extraction_timeout", 15.0);
   parameters_.ransac_threshold = this->declare_parameter<double>("ransac_threshold", 0.2);
   parameters_.ransac_max_iterations = this->declare_parameter<int>("ransac_max_iterations", 100);
   parameters_.lidar_cluster_max_tolerance =
@@ -204,10 +204,10 @@ ExtrinsicReflectorBasedCalibrator::ExtrinsicReflectorBasedCalibrator(
   parameters_.max_matching_distance = this->declare_parameter<double>("max_matching_distance", 1.0);
   parameters_.max_number_of_combination_samples = static_cast<std::size_t>(
     this->declare_parameter<int>("max_number_of_combination_samples", 2000));
-  parameters_.match_count_for_convergence =
-    static_cast<std::size_t>(this->declare_parameter<int>("match_count_for_convergence", 10));
+  parameters_.min_frames_for_convergence =
+    this->declare_parameter<int>("min_frames_for_convergence", 10);
   parameters_.reflector_points_threshold =
-    static_cast<int>(this->declare_parameter<int>("reflector_points_threshold", 10));
+    this->declare_parameter<int>("reflector_points_threshold", 10);
 
   auto msg_type = this->declare_parameter<std::string>("msg_type");
   auto transformation_type = this->declare_parameter<std::string>("transformation_type");
@@ -218,7 +218,7 @@ ExtrinsicReflectorBasedCalibrator::ExtrinsicReflectorBasedCalibrator(
   } else if (msg_type == "radar_cloud") {
     msg_type_ = MsgType::radar_cloud;
   } else {
-    throw std::runtime_error("Invalid param value: " + msg_type);
+    throw std::runtime_error("Invalid msg_type value: " + msg_type);
   }
 
   if (transformation_type == "svd_2d") {
@@ -230,7 +230,7 @@ ExtrinsicReflectorBasedCalibrator::ExtrinsicReflectorBasedCalibrator(
   } else if (transformation_type == "zero_roll_3d") {
     transformation_type_ = TransformationType::zero_roll_3d;
   } else {
-    throw std::runtime_error("Invalid param value: " + transformation_type);
+    throw std::runtime_error("Invalid transformation_type value: " + transformation_type);
   }
 
   parameters_.max_initial_calibration_translation_error =
@@ -258,8 +258,6 @@ ExtrinsicReflectorBasedCalibrator::ExtrinsicReflectorBasedCalibrator(
   tracking_markers_pub_ =
     this->create_publisher<visualization_msgs::msg::MarkerArray>("tracking_markers", 10);
   text_markers_pub_ = this->create_publisher<visualization_msgs::msg::Marker>("text_markers", 10);
-  // metrics_pub_ =
-  //   this->create_publisher<std_msgs::msg::Float32MultiArray>("calibration_metrics", 10);
   metrics_pub_ = this->create_publisher<tier4_calibration_msgs::msg::CalibrationMetrics>(
     "calibration_metrics", 10);
 
@@ -517,7 +515,6 @@ void ExtrinsicReflectorBasedCalibrator::loadDatabaseCallback(
 
   try {
     parseConvergedTracks(file, converged_tracks_);
-    // parseMatrices(file);
     parseHeader(file, "lidar_header:", lidar_header_);
     parseHeader(file, "radar_header:", radar_header_);
     lidar_frame_ = lidar_header_.frame_id;
@@ -640,11 +637,11 @@ void ExtrinsicReflectorBasedCalibrator::lidarCallback(
 
   bool is_track_converged = trackMatches(matches);
   if (is_track_converged) calibrateSensors();
-  auto output_markers =
-    visualization_.visualizationMarkers(lidar_detections, radar_detections, matches);
-  lidar_detections_pub_->publish(output_markers.lidar_detections_marker_array);
-  radar_detections_pub_->publish(output_markers.radar_detections_marker_array);
-  matches_markers_pub_->publish(output_markers.matches_marker_array);
+  auto detection_markers =
+    visualization_.visualizeDetectionMarkers(lidar_detections, radar_detections, matches);
+  lidar_detections_pub_->publish(detection_markers.lidar_detections_marker_array);
+  radar_detections_pub_->publish(detection_markers.radar_detections_marker_array);
+  matches_markers_pub_->publish(detection_markers.matches_marker_array);
 
   auto tracking_markers =
     visualization_.visualizeTrackMarkers(converged_tracks_, calibrated_radar_to_lidar_eigen_);
@@ -1426,8 +1423,8 @@ bool ExtrinsicReflectorBasedCalibrator::trackMatches(
     return false;
   }
 
-  count_++;
-  if (count_ < parameters_.match_count_for_convergence) {
+  num_of_frame_++;
+  if (num_of_frame_ < parameters_.min_frames_for_convergence) {
     for (const auto & match : matches) {
       bool added_to_existing_group = false;
 
@@ -1460,7 +1457,7 @@ bool ExtrinsicReflectorBasedCalibrator::trackMatches(
     std::remove_if(
       converging_tracks_.begin(), converging_tracks_.end(),
       [this](const std::vector<Track> & tracks) {
-        return tracks.size() < static_cast<size_t>(parameters_.match_count_for_convergence / 2);
+        return tracks.size() < static_cast<size_t>(parameters_.min_frames_for_convergence / 2);
       }),
     converging_tracks_.end());
 
@@ -1477,12 +1474,11 @@ bool ExtrinsicReflectorBasedCalibrator::trackMatches(
 
   updateTrackIds(converged_tracks_);
 
-  RCLCPP_INFO(this->get_logger(), "counting_matches number= %lu", converging_tracks_.size());
   RCLCPP_INFO(this->get_logger(), "converged_tracks size= %lu", converged_tracks_.size());
 
   current_new_tracks_ = converging_tracks_.size();
   tracking_active_ = false;
-  count_ = 0;
+  num_of_frame_ = 0;
   converging_tracks_.clear();
 
   if (!current_new_tracks_) {
