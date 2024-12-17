@@ -26,7 +26,7 @@
 namespace marker_radar_lidar_calibrator
 {
 
-struct VisualizationParamters
+struct VisualizationParameters
 {
   std_msgs::msg::Header lidar_header;
   std_msgs::msg::Header radar_header;
@@ -49,7 +49,7 @@ public:
   Visualization() = default;
   ~Visualization() = default;
 
-  void setParameters(VisualizationParamters params);
+  void setParameters(VisualizationParameters params);
   DetectionMarkers visualizeDetectionMarkers(
     const std::vector<Eigen::Vector3d> & lidar_detections,
     const std::vector<Eigen::Vector3d> & radar_detections,
@@ -63,7 +63,7 @@ public:
     const size_t converged_tracks_size, TransformationType type, CalibrationErrorMetrics metrics);
 
 private:
-  VisualizationParamters params_;
+  VisualizationParameters params_;
   static constexpr double m_to_cm = 100.0;
 };
 

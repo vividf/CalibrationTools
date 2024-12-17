@@ -1287,7 +1287,7 @@ bool ExtrinsicReflectorBasedCalibrator::checkInitialTransforms()
   }
 
   // Set visualization parameters
-  VisualizationParamters params;
+  VisualizationParameters params;
   params.lidar_header = lidar_header_;
   params.radar_header = radar_header_;
   params.transformation_type = transformation_type_;
@@ -1615,7 +1615,7 @@ TransformationResult ExtrinsicReflectorBasedCalibrator::estimateTransformation()
                             << initial_radar_to_lidar_eigen_.matrix());
     RCLCPP_INFO_STREAM(
       this->get_logger(),
-      "Yaw-only roatation 2D radar->lidar transform:\n"
+      "Yaw-only rotation 2D radar->lidar transform:\n"
         << transformation_result
              .calibrated_radar_to_lidar_transformations[TransformationType::yaw_only_rotation_2d]
              .matrix());
