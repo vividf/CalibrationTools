@@ -17,7 +17,7 @@
 import math
 
 import matplotlib.pyplot as plt
-import matplotlib.ticker as mticker
+import matplotlib.ticker as mticker  # cspell:ignore mticker
 import numpy as np
 import rclpy
 from rclpy.node import Node

@@ -22,7 +22,7 @@
 namespace marker_radar_lidar_calibrator
 {
 
-void Visualization::setParameters(VisualizationParamters params) { params_ = params; }
+void Visualization::setParameters(VisualizationParameters params) { params_ = params; }
 
 DetectionMarkers Visualization::visualizeDetectionMarkers(
   const std::vector<Eigen::Vector3d> & lidar_detections,
