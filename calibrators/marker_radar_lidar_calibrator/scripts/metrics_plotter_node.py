@@ -21,9 +21,7 @@ import matplotlib.ticker as mticker
 import numpy as np
 import rclpy
 from rclpy.node import Node
-from tier4_calibration_msgs.msg import (
-    CalibrationMetrics,  # Adjust the import for the new message type
-)
+from tier4_calibration_msgs.msg import CalibrationMetrics
 
 
 class MetricsPlotter:
@@ -156,35 +154,21 @@ class MetricsPlotter:
             metrics["std_crossval_yaw_error_list"] = method.std_crossval_calibrated_yaw_error
 
     def compute_detection_metrics(self, detections):
+        epsilon = 1e-6
         ranges = []
         pitches = []
         yaws = []
 
         for detection in detections:
-            # Print detection coordinates for debugging
-            print(f"Detection point: x={detection.x}, y={detection.y}, z={detection.z}")
-
-            # Compute range
             range_ = math.sqrt(detection.x**2 + detection.y**2 + detection.z**2)
-            if range_ == 0:
-                print("Skipping detection with zero range.")
-                continue  # Skip invalid detections
+            range_ = max(range_, epsilon)
+            ranges.append(range_)
 
-            # Compute pitch angle (clamped to valid range)
             pitch = math.degrees(math.asin(max(-1.0, min(1.0, detection.z / range_))))
             pitches.append(pitch)
 
-            # Compute yaw angle
             yaw = math.degrees(math.atan2(detection.y, detection.x))
             yaws.append(yaw)
-
-            # Add range
-            ranges.append(range_)
-
-        # Print computed values for debugging
-        print(f"Ranges: {ranges}")
-        print(f"Pitches: {pitches}")
-        print(f"Yaws: {yaws}")
 
         return ranges, pitches, yaws
 
@@ -266,82 +250,61 @@ class MetricsPlotter:
             subplots["average_distance"].clear()
             subplots["average_yaw"].clear()
 
-            # Draw cross-validation plots
-            if metrics["crossval_sample_list"] and metrics["crossval_distance_error_list"]:
-                subplots["crossval_distance"].plot(
-                    metrics["crossval_sample_list"],
-                    metrics["crossval_distance_error_list"],
-                    self.color_distance_o,
-                )
-            if metrics["crossval_sample_list"] and metrics["crossval_yaw_error_list"]:
-                subplots["crossval_yaw"].plot(
-                    metrics["crossval_sample_list"],
-                    metrics["crossval_yaw_error_list"],
-                    self.color_yaw_o,
-                )
+            # Filter data where the number of reflectors >= 3
+            filtered_indices = [
+                i for i, num in enumerate(metrics["num_of_reflectors_list"]) if num >= 3
+            ]
 
-            # Draw average error plots
-            if metrics["num_of_reflectors_list"] and metrics["calibration_distance_error_list"]:
+            filtered_reflectors = [metrics["num_of_reflectors_list"][i] for i in filtered_indices]
+            filtered_distance_errors = [
+                metrics["calibration_distance_error_list"][i] for i in filtered_indices
+            ]
+            filtered_yaw_errors = [
+                metrics["calibration_yaw_error_list"][i] for i in filtered_indices
+            ]
+
+            if filtered_reflectors and filtered_distance_errors:
                 subplots["average_distance"].plot(
-                    metrics["num_of_reflectors_list"],
-                    metrics["calibration_distance_error_list"],
+                    filtered_reflectors,
+                    filtered_distance_errors,
                     self.color_distance_o,
                 )
-            if metrics["num_of_reflectors_list"] and metrics["calibration_yaw_error_list"]:
-                subplots["average_yaw"].plot(
-                    metrics["num_of_reflectors_list"],
-                    metrics["calibration_yaw_error_list"],
-                    self.color_yaw_o,
+                subplots["average_distance"].annotate(
+                    f"{filtered_distance_errors[-1]:.2f}",
+                    xy=(filtered_reflectors[-1], filtered_distance_errors[-1]),
+                    color=self.color_distance,
                 )
 
-            # Annotate the last value for average distance/yaw
-            if metrics["num_of_reflectors_list"]:
-                if metrics["calibration_distance_error_list"]:
-                    subplots["average_distance"].annotate(
-                        f"{metrics['calibration_distance_error_list'][-1]:.2f}",
-                        xy=(
-                            metrics["num_of_reflectors_list"][-1],
-                            metrics["calibration_distance_error_list"][-1],
-                        ),
-                        color=self.color_distance,
-                    )
-                if metrics["calibration_yaw_error_list"]:
-                    subplots["average_yaw"].annotate(
-                        f"{metrics['calibration_yaw_error_list'][-1]:.2f}",
-                        xy=(
-                            metrics["num_of_reflectors_list"][-1],
-                            metrics["calibration_yaw_error_list"][-1],
-                        ),
-                        color=self.color_yaw,
-                    )
+            if filtered_reflectors and filtered_yaw_errors:
+                subplots["average_yaw"].plot(
+                    filtered_reflectors,
+                    filtered_yaw_errors,
+                    self.color_yaw_o,
+                )
+                subplots["average_yaw"].annotate(
+                    f"{filtered_yaw_errors[-1]:.2f}",
+                    xy=(filtered_reflectors[-1], filtered_yaw_errors[-1]),
+                    color=self.color_yaw,
+                )
 
-            # Annotate the last value for cross-validation distance/yaw
-            if metrics["crossval_sample_list"]:
-                if metrics["crossval_distance_error_list"]:
-                    subplots["crossval_distance"].annotate(
-                        f"{metrics['crossval_distance_error_list'][-1]:.2f}",
-                        xy=(
-                            metrics["crossval_sample_list"][-1],
-                            metrics["crossval_distance_error_list"][-1],
-                        ),
-                        color=self.color_distance,
-                    )
-                if metrics["crossval_yaw_error_list"]:
-                    subplots["crossval_yaw"].annotate(
-                        f"{metrics['crossval_yaw_error_list'][-1]:.2f}",
-                        xy=(
-                            metrics["crossval_sample_list"][-1],
-                            metrics["crossval_yaw_error_list"][-1],
-                        ),
-                        color=self.color_yaw,
-                    )
-
-            # Draw standard deviation bands for cross-validation
             if (
                 metrics["crossval_sample_list"]
                 and metrics["crossval_distance_error_list"]
                 and metrics["std_crossval_distance_error_list"]
             ):
+                subplots["crossval_distance"].plot(
+                    metrics["crossval_sample_list"],
+                    metrics["crossval_distance_error_list"],
+                    self.color_distance_o,
+                )
+                subplots["crossval_distance"].annotate(
+                    f"{metrics['crossval_distance_error_list'][-1]:.2f}",
+                    xy=(
+                        metrics["crossval_sample_list"][-1],
+                        metrics["crossval_distance_error_list"][-1],
+                    ),
+                    color=self.color_distance,
+                )
                 subplots["crossval_distance"].fill_between(
                     metrics["crossval_sample_list"],
                     np.array(metrics["crossval_distance_error_list"])
@@ -351,11 +314,25 @@ class MetricsPlotter:
                     color=self.color_distance,
                     alpha=0.3,
                 )
+
             if (
                 metrics["crossval_sample_list"]
                 and metrics["crossval_yaw_error_list"]
                 and metrics["std_crossval_yaw_error_list"]
             ):
+                subplots["crossval_yaw"].plot(
+                    metrics["crossval_sample_list"],
+                    metrics["crossval_yaw_error_list"],
+                    self.color_yaw_o,
+                )
+                subplots["crossval_yaw"].annotate(
+                    f"{metrics['crossval_yaw_error_list'][-1]:.2f}",
+                    xy=(
+                        metrics["crossval_sample_list"][-1],
+                        metrics["crossval_yaw_error_list"][-1],
+                    ),
+                    color=self.color_yaw,
+                )
                 subplots["crossval_yaw"].fill_between(
                     metrics["crossval_sample_list"],
                     np.array(metrics["crossval_yaw_error_list"])

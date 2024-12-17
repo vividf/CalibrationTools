@@ -60,8 +60,7 @@ public:
 
   visualization_msgs::msg::MarkerArray deleteTrackMarkers(const size_t converged_tracks_size);
   visualization_msgs::msg::Marker drawCalibrationStatusText(
-    const size_t converged_tracks_size,
-    std::unordered_map<TransformationType, CalibrationErrorMetrics> methods);
+    const size_t converged_tracks_size, TransformationType type, CalibrationErrorMetrics metrics);
 
 private:
   VisualizationParamters params_;
