@@ -17,7 +17,6 @@
 #include <rclcpp/rclcpp.hpp>
 
 #include <string>
-#include <unordered_map>
 #include <vector>
 
 namespace marker_radar_lidar_calibrator
@@ -249,8 +248,7 @@ visualization_msgs::msg::MarkerArray Visualization::deleteTrackMarkers(
 }
 
 visualization_msgs::msg::Marker Visualization::drawCalibrationStatusText(
-  const size_t converged_tracks_size,
-  std::unordered_map<TransformationType, CalibrationErrorMetrics> methods)
+  const size_t converged_tracks_size, TransformationType type, CalibrationErrorMetrics metrics)
 {
   visualization_msgs::msg::Marker text_marker;
 
@@ -264,31 +262,21 @@ visualization_msgs::msg::Marker Visualization::drawCalibrationStatusText(
   text_marker.ns = "calibration_status";
   text_marker.scale.z = 0.3;
 
-  // show the latest cross validation results which is located in the last two elements of the
-  // metrics vector show the latest calibration result, which is located in the 2nd and 3rd index of
-  // the metrics vector
+  text_marker.text = toString(type) + "\npairs=" + std::to_string(converged_tracks_size);
+  if (converged_tracks_size) {
+    // Display average errors
+    text_marker.text +=
+      "\naverage_distance_error[cm]=" +
+      toStringWithPrecision(metrics.calibrated_distance_error * m_to_cm, 2) +
+      "\naverage_yaw_error[deg]=" + toStringWithPrecision(metrics.calibrated_yaw_error, 2);
 
-  if (!converged_tracks_size) {
-    text_marker.text = " pairs=" + std::to_string(converged_tracks_size);
-  } else {
-    text_marker.text = " pairs=" + std::to_string(converged_tracks_size);
-
-    for (const auto & [type, metrics] : methods) {
-      // Display average errors
-      text_marker.text += "\n " + toString(type) + ": average_distance_error[cm]=" +
-                          toStringWithPrecision(metrics.calibrated_distance_error * m_to_cm, 2) +
-                          "\n " + toString(type) + ": average_yaw_error[deg]=" +
-                          toStringWithPrecision(metrics.calibrated_yaw_error, 2);
-
-      // Display cross-validation errors
-      if (converged_tracks_size > 3) {
-        text_marker.text +=
-          "\n " + toString(type) + ": crossval_distance_error[cm]=" +
-          toStringWithPrecision(
-            metrics.avg_crossval_calibrated_distance_error.back() * m_to_cm, 2) +
-          "\n " + toString(type) + ": crossval_yaw_error[deg]=" +
-          toStringWithPrecision(metrics.avg_crossval_calibrated_yaw_error.back(), 2);
-      }
+    // Display cross-validation errors
+    if (converged_tracks_size > 3) {
+      text_marker.text +=
+        "\ncrossval_distance_error[cm]=" +
+        toStringWithPrecision(metrics.avg_crossval_calibrated_distance_error.back() * m_to_cm, 2) +
+        "\ncrossval_yaw_error[deg]=" +
+        toStringWithPrecision(metrics.avg_crossval_calibrated_yaw_error.back(), 2);
     }
   }
   text_marker.pose.position.x = 1.0;

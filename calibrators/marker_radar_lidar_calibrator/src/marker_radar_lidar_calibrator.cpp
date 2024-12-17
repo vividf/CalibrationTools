@@ -471,8 +471,9 @@ void ExtrinsicReflectorBasedCalibrator::deleteTrackRequestCallback(
     auto tracking_markers =
       visualization_.visualizeTrackMarkers(converged_tracks_, calibrated_radar_to_lidar_eigen_);
     tracking_markers_pub_->publish(tracking_markers);
-    auto text_markers =
-      visualization_.drawCalibrationStatusText(converged_tracks_.size(), output_metrics_.methods);
+    auto text_markers = visualization_.drawCalibrationStatusText(
+      converged_tracks_.size(), transformation_type_,
+      output_metrics_.methods[transformation_type_]);
     text_markers_pub_->publish(text_markers);
 
     response->success = true;
@@ -538,8 +539,8 @@ void ExtrinsicReflectorBasedCalibrator::loadDatabaseCallback(
   auto tracking_markers =
     visualization_.visualizeTrackMarkers(converged_tracks_, calibrated_radar_to_lidar_eigen_);
   tracking_markers_pub_->publish(tracking_markers);
-  auto text_markers =
-    visualization_.drawCalibrationStatusText(converged_tracks_.size(), output_metrics_.methods);
+  auto text_markers = visualization_.drawCalibrationStatusText(
+    converged_tracks_.size(), transformation_type_, output_metrics_.methods[transformation_type_]);
   text_markers_pub_->publish(text_markers);
 }
 
@@ -646,8 +647,8 @@ void ExtrinsicReflectorBasedCalibrator::lidarCallback(
   auto tracking_markers =
     visualization_.visualizeTrackMarkers(converged_tracks_, calibrated_radar_to_lidar_eigen_);
   tracking_markers_pub_->publish(tracking_markers);
-  auto text_markers =
-    visualization_.drawCalibrationStatusText(converged_tracks_.size(), output_metrics_.methods);
+  auto text_markers = visualization_.drawCalibrationStatusText(
+    converged_tracks_.size(), transformation_type_, output_metrics_.methods[transformation_type_]);
   text_markers_pub_->publish(text_markers);
 
   RCLCPP_INFO(
@@ -1599,15 +1600,6 @@ TransformationResult ExtrinsicReflectorBasedCalibrator::estimateTransformation()
     transformation_result
       .calibrated_radar_to_lidar_transformations[TransformationType::yaw_only_rotation_2d] =
       estimator.getTransformation();
-    RCLCPP_INFO_STREAM(
-      this->get_logger(), "Initial radar->lidar transform:\n"
-                            << initial_radar_to_lidar_eigen_.matrix());
-    RCLCPP_INFO_STREAM(
-      this->get_logger(),
-      "Pure rotation calibration radar->lidar transform:\n"
-        << transformation_result
-             .calibrated_radar_to_lidar_transformations[TransformationType::yaw_only_rotation_2d]
-             .matrix());
 
     // svd 2d transformation
     std::tie(transformation_result.lidar_points_ocs, transformation_result.radar_points_rcs) =
@@ -1617,16 +1609,16 @@ TransformationResult ExtrinsicReflectorBasedCalibrator::estimateTransformation()
     estimator.estimateSVDTransformation(transformation_type_);
     transformation_result.calibrated_radar_to_lidar_transformations[TransformationType::svd_2d] =
       estimator.getTransformation();
+
     RCLCPP_INFO_STREAM(
       this->get_logger(), "Initial radar->lidar transform:\n"
                             << initial_radar_to_lidar_eigen_.matrix());
     RCLCPP_INFO_STREAM(
       this->get_logger(),
-      "Yaw only 2D calibration radar->lidar transform:\n"
+      "Yaw-only roatation 2D radar->lidar transform:\n"
         << transformation_result
-             .calibrated_radar_to_lidar_transformations[TransformationType::svd_2d]
+             .calibrated_radar_to_lidar_transformations[TransformationType::yaw_only_rotation_2d]
              .matrix());
-
     RCLCPP_INFO_STREAM(
       this->get_logger(),
       "SVD 2D calibration radar->lidar transform:\n"
