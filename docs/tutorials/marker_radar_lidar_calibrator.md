@@ -122,11 +122,20 @@ After the background model has been extracted, the user can carry the radar refl
 
 In the tutorial rosbag, the user will see that both the human and the radar reflector (with a tripod) are identified as foreground objects in the image below.
 
-In the image, the colored points represent different lidar foreground clusters. The purple lines indicate radar foreground detections, appearing as lines due to the radar's lack of elevation data, making the z-axis unknown. The blue point is the estimated center of the radar reflector derived from the lidar pointcloud. There is no blue point on the human cluster because the calibrator filters out clusters where the highest point in the cluster exceeds the specified threshold.
+In the left image below, the colored points represent different lidar foreground clusters. The purple lines indicate radar foreground detections, appearing as lines due to the radar's lack of elevation data, making the z-axis unknown. The blue point is the estimated center of the radar reflector derived from the lidar pointcloud. There is no blue point on the human cluster because the calibrator filters out clusters where the highest point in the cluster exceeds the specified threshold.
 
-<p align="center">
-    <img src="../images/marker_radar_lidar_calibrator/add1.png" alt="add1" width="300" height="300">
-</p>
+On the other hand, if the radar provides elevation data, the detections appear as points, as shown in the right image below.
+
+<table>
+  <tr>
+    <td><img src="../images/marker_radar_lidar_calibrator/add2d_1.png"  alt="2d" width = 700px height = 300px></td>
+    <td><img src="../images/marker_radar_lidar_calibrator/add3d_1.png"  alt="3d" width = 700px height = 300px ></td>
+   </tr>
+   <tr>
+    <td><p style="text-align: center;">Radar without elevation.</p></td>
+    <td><p style="text-align: center;">Radar with elevation.</p></td>
+  </tr>
+</table>
 
 When a purple line connects the purple point (the radar estimation of the reflector) and the blue point (the lidar estimation of the reflector), the user can press the `Add lidar-radar pair` button to register them as a pair. The line represents that the detections in each modality recognize each other as their best match, thus forming a valid pair. If this does not happen, the initial calibration may be too far from the real value for the pairing heuristic to succeed.
 
