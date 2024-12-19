@@ -63,9 +63,7 @@ To address this issue, we rely on a heuristic that leverages the accuracy of ini
 
 Using the initial radar-lidar calibration, we project each lidar corner reflector candidate into the radar coordinates and for each candidate we compute the closest candidate from the other modality. We consider real radar-lidar pairs of corner reflectors those pairs who are mutually their closest candidate.
 
-Matches using this heuristic can still contain incorrect pairs and false positives, which is why we employ a Kalman filter to both improve the estimations and check for temporal consistency (false positives are not usually consistent in time).
-
-Once matches' estimations converge (using a covariance matrix criteria), they are added to the calibration list.
+Matches using this heuristic can still contain incorrect pairs and false positives. To address this, we use a naive tracking algorithm to verify whether the matches fall within the radar reflector's radius compared to matches from the previous frame. Once the pairs are consistently tracked over a specified number of frames, we assume the matches have converged and add them to the calibration list.
 
 ### Step 4: Rigid transformation estimation
 
