@@ -77,29 +77,14 @@ class MetricsPlotter:
             if method not in self.metrics_data:
                 self.metrics_data[method] = {
                     "num_of_reflectors_list": [],
-                    "calibration_distance_error_list": [],
-                    "calibration_yaw_error_list": [],
+                    "calibrated_distance_error_list": [],
+                    "calibrated_yaw_error_list": [],
                     "crossval_sample_list": [],
                     "crossval_distance_error_list": [],
                     "crossval_yaw_error_list": [],
                     "std_crossval_distance_error_list": [],
                     "std_crossval_yaw_error_list": [],
                 }
-
-    def is_delete_operation(self, method, msg_array):
-        if method not in self.metrics_data:
-            return False  # Skip if the method is not initialized
-        return (
-            self.metrics_data[method]["num_of_reflectors_list"]
-            and msg_array[0] < self.metrics_data[method]["num_of_reflectors_list"][-1]
-        )
-
-    def remove_avg_error_from_list(self, method):
-        metrics = self.metrics_data[method]
-        for _ in range(min(2, len(metrics["num_of_reflectors_list"]))):
-            metrics["calibration_distance_error_list"].pop()
-            metrics["calibration_yaw_error_list"].pop()
-            metrics["num_of_reflectors_list"].pop()
 
     def plot_label_and_set_xy_lim(self):
         if not hasattr(self, "axes"):
@@ -138,20 +123,21 @@ class MetricsPlotter:
         for method in msg.method_metrics:
             method_name = method.method_name
             metrics = self.metrics_data[method_name]
-            metrics["num_of_reflectors_list"].append(msg.num_of_converged_tracks)
-            metrics["calibration_distance_error_list"].append(
-                method.calibrated_distance_error * self.m_to_cm
-            )
-            metrics["calibration_yaw_error_list"].append(method.calibrated_yaw_error)
+            metrics["num_of_reflectors_list"] = list(range(1, msg.num_of_converged_tracks + 1))
+            metrics["calibrated_distance_error_list"] = [
+                value * self.m_to_cm for value in method.calibrated_distance_errors
+            ]
+            metrics["calibrated_yaw_error_list"] = method.calibrated_yaw_errors
+
             metrics["crossval_sample_list"] = msg.num_of_samples
             metrics["crossval_distance_error_list"] = [
-                value * self.m_to_cm for value in method.avg_crossval_calibrated_distance_error
+                value * self.m_to_cm for value in method.avg_crossval_calibrated_distance_errors
             ]
-            metrics["crossval_yaw_error_list"] = method.avg_crossval_calibrated_yaw_error
+            metrics["crossval_yaw_error_list"] = method.avg_crossval_calibrated_yaw_errors
             metrics["std_crossval_distance_error_list"] = [
-                value * self.m_to_cm for value in method.std_crossval_calibrated_distance_error
+                value * self.m_to_cm for value in method.std_crossval_calibrated_distance_errors
             ]
-            metrics["std_crossval_yaw_error_list"] = method.std_crossval_calibrated_yaw_error
+            metrics["std_crossval_yaw_error_list"] = method.std_crossval_calibrated_yaw_errors
 
     def compute_detection_metrics(self, detections):
         epsilon = 1e-6
@@ -257,10 +243,10 @@ class MetricsPlotter:
 
             filtered_reflectors = [metrics["num_of_reflectors_list"][i] for i in filtered_indices]
             filtered_distance_errors = [
-                metrics["calibration_distance_error_list"][i] for i in filtered_indices
+                metrics["calibrated_distance_error_list"][i] for i in filtered_indices
             ]
             filtered_yaw_errors = [
-                metrics["calibration_yaw_error_list"][i] for i in filtered_indices
+                metrics["calibrated_yaw_error_list"][i] for i in filtered_indices
             ]
 
             if filtered_reflectors and filtered_distance_errors:
@@ -350,10 +336,6 @@ class MetricsPlotter:
         if not self.metrics_data or set(self.metrics_data.keys()) != set(methods_in_msg):
             self.initialize_figure(methods_in_msg)
             self.initialize_metrics(methods_in_msg)
-
-        for method in methods_in_msg:
-            if self.is_delete_operation(method, [msg.num_of_converged_tracks]):
-                self.remove_avg_error_from_list(method)
 
         self.update_metrics(msg)
         self.draw_subplots()

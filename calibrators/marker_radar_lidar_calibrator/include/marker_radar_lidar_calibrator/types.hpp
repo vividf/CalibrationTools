@@ -83,21 +83,21 @@ struct TransformationResult
 
 struct CalibrationErrorMetrics
 {
-  double calibrated_distance_error = 0;
-  double calibrated_yaw_error = 0;
-  std::vector<double> avg_crossval_calibrated_distance_error;
-  std::vector<double> avg_crossval_calibrated_yaw_error;
-  std::vector<double> std_crossval_calibrated_distance_error;
-  std::vector<double> std_crossval_calibrated_yaw_error;
+  std::vector<double> calibrated_distance_errors;
+  std::vector<double> calibrated_yaw_errors;
+  std::vector<double> avg_crossval_calibrated_distance_errors;
+  std::vector<double> avg_crossval_calibrated_yaw_errors;
+  std::vector<double> std_crossval_calibrated_distance_errors;
+  std::vector<double> std_crossval_calibrated_yaw_errors;
 
   void clear()
   {
-    calibrated_distance_error = 0;
-    calibrated_yaw_error = 0;
-    avg_crossval_calibrated_distance_error.clear();
-    avg_crossval_calibrated_yaw_error.clear();
-    std_crossval_calibrated_distance_error.clear();
-    std_crossval_calibrated_yaw_error.clear();
+    calibrated_distance_errors.clear();
+    calibrated_yaw_errors.clear();
+    avg_crossval_calibrated_distance_errors.clear();
+    avg_crossval_calibrated_yaw_errors.clear();
+    std_crossval_calibrated_distance_errors.clear();
+    std_crossval_calibrated_yaw_errors.clear();
   }
 };
 

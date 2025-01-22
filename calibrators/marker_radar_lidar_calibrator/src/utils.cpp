@@ -69,7 +69,7 @@ void updateTrackIds(std::vector<Track> & converged_tracks)
 
 std::pair<double, double> computeCalibrationError(
   std::vector<Track> & converged_tracks, TransformationType transformation_type,
-  const Eigen::Isometry3d & radar_to_lidar_isometry)
+  const Eigen::Isometry3d & radar_to_lidar_isometry, bool record_error_in_track)
 {
   double total_distance_error = 0.0;
   double total_yaw_error = 0.0;
@@ -81,8 +81,10 @@ std::pair<double, double> computeCalibrationError(
       getDistanceError(transformation_type, lidar_estimation_transformed, track.radar_estimation);
     auto yaw_error = getYawError(lidar_estimation_transformed, track.radar_estimation);
 
-    track.distance_error = distance_error;
-    track.yaw_error = yaw_error * 180.0 / (M_PI);
+    if (record_error_in_track) {
+      track.distance_error = distance_error;
+      track.yaw_error = yaw_error * 180.0 / (M_PI);
+    }
     total_distance_error += distance_error;
     total_yaw_error += yaw_error;
   }
@@ -112,50 +114,55 @@ double getYawError(Eigen::Vector3d v1, Eigen::Vector3d v2)
   return std::abs(std::acos(v1.dot(v2) / (v1.norm() * v2.norm())));
 }
 
-void findCombinations(
+void randomFindCombinations(
   std::size_t n, std::size_t k, std::vector<std::size_t> & curr, std::size_t first_num,
-  std::vector<std::vector<std::size_t>> & combinations)
+  std::vector<std::vector<std::size_t>> & combinations, std::size_t & count,
+  std::size_t max_number_of_combination_samples, std::mt19937 & mt)
 {
-  auto curr_size = curr.size();
-  if (curr_size == k) {
+  if (curr.size() == k) {
     combinations.push_back(curr);
+    count++;
+    if (count >= max_number_of_combination_samples) return;
     return;
   }
 
-  auto need = k - curr_size;
-  auto remain = n - first_num + 1;
-  auto available = remain - need;
-
-  for (auto num = first_num; num <= first_num + available; num++) {
-    curr.push_back(num);
-    findCombinations(n, k, curr, num + 1, combinations);
-    curr.pop_back();
+  std::vector<std::size_t> available_nums;
+  for (std::size_t num = first_num; num <= n; num++) {
+    available_nums.push_back(num);
   }
 
-  return;
+  std::shuffle(available_nums.begin(), available_nums.end(), mt);
+
+  for (std::size_t num : available_nums) {
+    curr.push_back(num);
+    randomFindCombinations(
+      n, k, curr, num + 1, combinations, count, max_number_of_combination_samples, mt);
+    curr.pop_back();
+    if (count >= max_number_of_combination_samples) return;
+  }
 }
 
 void selectCombinations(
   const rclcpp::Logger & logger, std::size_t tracks_size, std::size_t num_of_samples,
-  std::vector<std::vector<std::size_t>> & combinations, size_t max_number_of_combination_samples)
+  std::vector<std::vector<std::size_t>> & combinations,
+  std::size_t max_number_of_combination_samples)
 {
   RCLCPP_INFO(
-    logger,
-    "Current number of combinations is: %zu, converged_tracks_size: %zu, num_of_samples: %zu",
-    combinations.size(), tracks_size, num_of_samples);
+    logger, "Generating up to %zu random combinations (tracks_size: %zu, num_of_samples: %zu)",
+    max_number_of_combination_samples, tracks_size, num_of_samples);
 
-  // random select the combinations if the number of combinations is too large
-  if (combinations.size() > max_number_of_combination_samples) {
-    std::random_device rd;
-    std::mt19937 mt(rd());
-    std::shuffle(combinations.begin(), combinations.end(), mt);
-    combinations.resize(max_number_of_combination_samples);
-    RCLCPP_WARN(
-      logger,
-      "The number of combinations is set to: %zu, because it exceeds the maximum number of "
-      "combination samples: %zu",
-      combinations.size(), max_number_of_combination_samples);
-  }
+  std::vector<std::size_t> curr;
+  std::size_t count = 0;
+  std::random_device rd;
+  std::mt19937 mt(rd());
+
+  randomFindCombinations(
+    tracks_size - 1, num_of_samples, curr, 0, combinations, count,
+    max_number_of_combination_samples, mt);
+
+  RCLCPP_INFO(
+    logger, "Generated %zu random combinations (limited to max %zu)", combinations.size(),
+    max_number_of_combination_samples);
 }
 
 void parseHeader(
