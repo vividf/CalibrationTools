@@ -35,14 +35,11 @@ void updateTrackIds(std::vector<Track> & converged_tracks);
 
 std::pair<double, double> computeCalibrationError(
   std::vector<Track> & converged_tracks, TransformationType transformation_type,
-  const Eigen::Isometry3d & radar_to_lidar_isometry);
+  const Eigen::Isometry3d & radar_to_lidar_isometry, bool record_error_in_track);
 double getDistanceError(
   TransformationType transformation_type, Eigen::Vector3d v1, Eigen::Vector3d v2);
 double getYawError(Eigen::Vector3d v1, Eigen::Vector3d v2);
 
-void findCombinations(
-  std::size_t n, std::size_t k, std::vector<std::size_t> & curr, std::size_t first_num,
-  std::vector<std::vector<std::size_t>> & combinations);
 void selectCombinations(
   const rclcpp::Logger & logger, std::size_t tracks_size, std::size_t num_of_samples,
   std::vector<std::vector<std::size_t>> & combinations, size_t max_number_of_combination_samples);

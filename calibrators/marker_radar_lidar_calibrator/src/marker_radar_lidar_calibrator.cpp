@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include "marker_radar_lidar_calibrator/types.hpp"
+
 #include <autoware/universe_utils/geometry/geometry.hpp>
 #include <marker_radar_lidar_calibrator/marker_radar_lidar_calibrator.hpp>
 #include <marker_radar_lidar_calibrator/transformation_estimator.hpp>
@@ -203,7 +205,7 @@ ExtrinsicReflectorBasedCalibrator::ExtrinsicReflectorBasedCalibrator(
   parameters_.reflector_max_height = this->declare_parameter<double>("reflector_max_height", 1.2);
   parameters_.max_matching_distance = this->declare_parameter<double>("max_matching_distance", 1.0);
   parameters_.max_number_of_combination_samples = static_cast<std::size_t>(
-    this->declare_parameter<int>("max_number_of_combination_samples", 2000));
+    this->declare_parameter<int>("max_number_of_combination_samples", 300));
   parameters_.min_frames_for_convergence =
     this->declare_parameter<int>("min_frames_for_convergence", 10);
   parameters_.reflector_points_threshold =
@@ -1537,23 +1539,23 @@ std::tuple<double, double> ExtrinsicReflectorBasedCalibrator::get2DRotationDelta
 
 std::tuple<
   pcl::PointCloud<common_types::PointType>::Ptr, pcl::PointCloud<common_types::PointType>::Ptr>
-ExtrinsicReflectorBasedCalibrator::getPointsSet()
+ExtrinsicReflectorBasedCalibrator::getPointsSet(const std::vector<Track> & tracks)
 {
   // Note: ocs=radar optimization coordinate system rcs=radar coordinate system
   pcl::PointCloud<common_types::PointType>::Ptr lidar_points_ocs(
     new pcl::PointCloud<common_types::PointType>);
   pcl::PointCloud<common_types::PointType>::Ptr radar_points_rcs(
     new pcl::PointCloud<common_types::PointType>);
-  lidar_points_ocs->reserve(converged_tracks_.size());
-  radar_points_rcs->reserve(converged_tracks_.size());
+  lidar_points_ocs->reserve(tracks.size());
+  radar_points_rcs->reserve(tracks.size());
 
   auto eigen_to_pcl_2d = [](const auto & p) { return common_types::PointType(p.x(), p.y(), 0.0); };
   auto eigen_to_pcl_3d = [](const auto & p) {
     return common_types::PointType(p.x(), p.y(), p.z());
   };
 
-  for (std::size_t track_index = 0; track_index < converged_tracks_.size(); track_index++) {
-    auto track = converged_tracks_[track_index];
+  for (std::size_t track_index = 0; track_index < tracks.size(); track_index++) {
+    auto track = tracks[track_index];
     // lidar coordinates
     const auto & lidar_estimation = track.lidar_estimation;
     // to radar optimization coordinates
@@ -1583,18 +1585,45 @@ ExtrinsicReflectorBasedCalibrator::getPointsSet()
   return {lidar_points_ocs, radar_points_rcs};
 }
 
-TransformationResult ExtrinsicReflectorBasedCalibrator::estimateTransformation()
+std::vector<Track> & ExtrinsicReflectorBasedCalibrator::getConvergedTracksSubset(
+  std::size_t track_idx)
+{
+  if (track_idx >= converged_tracks_.size() - 1) {
+    return converged_tracks_;
+  }
+
+  static std::vector<Track> subset;
+  subset.assign(converged_tracks_.begin(), converged_tracks_.begin() + track_idx + 1);
+  return subset;
+}
+
+TransformationResult ExtrinsicReflectorBasedCalibrator::estimateTransformation(
+  std::size_t track_index)
 {
   TransformationResult transformation_result;
   TransformationEstimator estimator(
     initial_radar_to_lidar_eigen_, initial_radar_optimization_to_radar_eigen_,
     radar_optimization_to_lidar_eigen_);
 
+  auto converged_tracks_subset = getConvergedTracksSubset(track_index);
+  // std::cout << "################################################" << std::endl;
+  // std::cout << "################################################" << std::endl;
+  // std::cout << "################################################" << std::endl;
+  // std::cout << "################################################" << std::endl;
+  // std::cout << "################################################" << std::endl;
+  // std::cout << "track_index: " << track_index << std::endl;
+  // std::cout << "converged_tracks_subset size: " << converged_tracks_subset.size() << std::endl;
+  // std::cout << "################################################" << std::endl;
+  // std::cout << "################################################" << std::endl;
+  // std::cout << "################################################" << std::endl;
+  // std::cout << "################################################" << std::endl;
+  // std::cout << "################################################" << std::endl;
+
   if (
     transformation_type_ == TransformationType::svd_2d ||
     transformation_type_ == TransformationType::yaw_only_rotation_2d) {
     // yaw only rotation
-    auto [delta_cos, delta_sin] = get2DRotationDelta(converged_tracks_, false);
+    auto [delta_cos, delta_sin] = get2DRotationDelta(converged_tracks_subset, false);
     estimator.set2DRotationDelta(delta_cos, delta_sin);
     estimator.estimateYawOnlyTransformation();
     transformation_result
@@ -1603,7 +1632,7 @@ TransformationResult ExtrinsicReflectorBasedCalibrator::estimateTransformation()
 
     // svd 2d transformation
     std::tie(transformation_result.lidar_points_ocs, transformation_result.radar_points_rcs) =
-      getPointsSet();
+      getPointsSet(converged_tracks_subset);
     estimator.setPoints(
       transformation_result.lidar_points_ocs, transformation_result.radar_points_rcs);
     estimator.estimateSVDTransformation(transformation_type_);
@@ -1627,7 +1656,7 @@ TransformationResult ExtrinsicReflectorBasedCalibrator::estimateTransformation()
              .matrix());
   } else {
     std::tie(transformation_result.lidar_points_ocs, transformation_result.radar_points_rcs) =
-      getPointsSet();
+      getPointsSet(converged_tracks_subset);
     estimator.setPoints(
       transformation_result.lidar_points_ocs, transformation_result.radar_points_rcs);
 
@@ -1663,11 +1692,13 @@ TransformationResult ExtrinsicReflectorBasedCalibrator::estimateTransformation()
 }
 
 void ExtrinsicReflectorBasedCalibrator::evaluateTransformation(
-  TransformationResult transformation_result)
+  TransformationResult transformation_result, std::size_t track_index)
 {
+  auto converged_tracks_subset = getConvergedTracksSubset(track_index);
+
   // Estimate the pre & post calibration error
-  auto [initial_distance_error, initial_yaw_error] =
-    computeCalibrationError(converged_tracks_, transformation_type_, initial_radar_to_lidar_eigen_);
+  auto [initial_distance_error, initial_yaw_error] = computeCalibrationError(
+    converged_tracks_subset, transformation_type_, initial_radar_to_lidar_eigen_, false);
   RCLCPP_INFO(
     this->get_logger(),
     "Initial calibration error: detection2detection.distance=%.4fm yaw=%.4f degrees",
@@ -1684,10 +1715,13 @@ void ExtrinsicReflectorBasedCalibrator::evaluateTransformation(
 
   for (const auto & [type, transformation] :
        transformation_result.calibrated_radar_to_lidar_transformations) {
-    auto [distance_error, yaw_error] =
-      computeCalibrationError(converged_tracks_, transformation_type_, transformation);
-    output_metrics_.methods[type].calibrated_distance_error = distance_error;
-    output_metrics_.methods[type].calibrated_yaw_error = yaw_error;
+    auto record_error_in_track =
+      true ? track_index == converged_tracks_.size() - 1 && type == transformation_type_ : false;
+
+    auto [distance_error, yaw_error] = computeCalibrationError(
+      converged_tracks_subset, transformation_type_, transformation, record_error_in_track);
+    output_metrics_.methods[type].calibrated_distance_errors.push_back(distance_error);
+    output_metrics_.methods[type].calibrated_yaw_errors.push_back(yaw_error);
 
     if (type == transformation_type_) {
       auto [calibrated_translation_difference, calibrated_rotation_difference] =
@@ -1695,7 +1729,8 @@ void ExtrinsicReflectorBasedCalibrator::evaluateTransformation(
       std::unique_lock<std::mutex> lock(mutex_);
       if (
         calibrated_translation_difference < parameters_.max_initial_calibration_translation_error &&
-        calibrated_rotation_difference < parameters_.max_initial_calibration_rotation_error) {
+        calibrated_rotation_difference < parameters_.max_initial_calibration_rotation_error &&
+        track_index == converged_tracks_.size() - 1) {
         calibrated_radar_to_lidar_eigen_ = transformation;
         calibration_valid_ = true;
         calibration_distance_score_ = distance_error;
@@ -1713,9 +1748,12 @@ void ExtrinsicReflectorBasedCalibrator::evaluateTransformation(
       this->get_logger(), "Type: %s, distance error: %.4fm, yaw error: %.4f degrees",
       toString(type).c_str(), distance_error, yaw_error);
   }
-  output_metrics_.num_of_converged_tracks = converged_tracks_.size();
-  for (const auto & converge_track : converged_tracks_) {
-    output_metrics_.detections.push_back(eigenToPointMsg(converge_track.radar_estimation));
+
+  if (track_index == converged_tracks_.size() - 1) {
+    output_metrics_.num_of_converged_tracks = converged_tracks_.size();
+    for (const auto & converge_track : converged_tracks_) {
+      output_metrics_.detections.push_back(eigenToPointMsg(converge_track.radar_estimation));
+    }
   }
 }
 
@@ -1788,8 +1826,9 @@ void ExtrinsicReflectorBasedCalibrator::evaluateCombinations(
       }
 
       // Compute errors for the transformation
-      auto [distance_error, yaw_error] =
-        computeCalibrationError(converged_tracks_, transformation_type_, calibrated_transformation);
+      auto converged_tracks = converged_tracks_;
+      auto [distance_error, yaw_error] = computeCalibrationError(
+        converged_tracks, transformation_type_, calibrated_transformation, false);
       total_distance_errors[type] += distance_error;
       total_yaw_errors[type] += yaw_error;
       distance_error_vectors[type].push_back(distance_error);
@@ -1821,12 +1860,12 @@ void ExtrinsicReflectorBasedCalibrator::evaluateCombinations(
       toString(type).c_str(), avg_distance_error, avg_yaw_error, std_distance_error, std_yaw_error);
 
     // Store in output metrics
-    output_metrics_.methods[type].avg_crossval_calibrated_distance_error.push_back(
+    output_metrics_.methods[type].avg_crossval_calibrated_distance_errors.push_back(
       avg_distance_error);
-    output_metrics_.methods[type].avg_crossval_calibrated_yaw_error.push_back(avg_yaw_error);
-    output_metrics_.methods[type].std_crossval_calibrated_distance_error.push_back(
+    output_metrics_.methods[type].avg_crossval_calibrated_yaw_errors.push_back(avg_yaw_error);
+    output_metrics_.methods[type].std_crossval_calibrated_distance_errors.push_back(
       std_distance_error);
-    output_metrics_.methods[type].std_crossval_calibrated_yaw_error.push_back(std_yaw_error);
+    output_metrics_.methods[type].std_crossval_calibrated_yaw_errors.push_back(std_yaw_error);
   }
 
   // Log number of samples
@@ -1843,7 +1882,6 @@ void ExtrinsicReflectorBasedCalibrator::crossValEvaluation(
     std::vector<std::vector<std::size_t>> combinations;
     std::vector<std::size_t> curr;
 
-    findCombinations(tracks_size - 1, num_of_samples, curr, 0, combinations);
     selectCombinations(
       this->get_logger(), tracks_size, num_of_samples, combinations,
       parameters_.max_number_of_combination_samples);
@@ -1863,14 +1901,14 @@ void ExtrinsicReflectorBasedCalibrator::publishMetrics()
   for (const auto & [type, metrics] : output_metrics_.methods) {
     tier4_calibration_msgs::msg::MethodMetrics method_msg;
     method_msg.method_name = toString(type);  // Use a function to get the string representation
-    method_msg.calibrated_distance_error = metrics.calibrated_distance_error;
-    method_msg.calibrated_yaw_error = metrics.calibrated_yaw_error;
-    method_msg.avg_crossval_calibrated_distance_error =
-      metrics.avg_crossval_calibrated_distance_error;
-    method_msg.avg_crossval_calibrated_yaw_error = metrics.avg_crossval_calibrated_yaw_error;
-    method_msg.std_crossval_calibrated_distance_error =
-      metrics.std_crossval_calibrated_distance_error;
-    method_msg.std_crossval_calibrated_yaw_error = metrics.std_crossval_calibrated_yaw_error;
+    method_msg.calibrated_distance_errors = metrics.calibrated_distance_errors;
+    method_msg.calibrated_yaw_errors = metrics.calibrated_yaw_errors;
+    method_msg.avg_crossval_calibrated_distance_errors =
+      metrics.avg_crossval_calibrated_distance_errors;
+    method_msg.avg_crossval_calibrated_yaw_errors = metrics.avg_crossval_calibrated_yaw_errors;
+    method_msg.std_crossval_calibrated_distance_errors =
+      metrics.std_crossval_calibrated_distance_errors;
+    method_msg.std_crossval_calibrated_yaw_errors = metrics.std_crossval_calibrated_yaw_errors;
 
     // Add the method-specific metrics to the message
     msg.method_metrics.push_back(method_msg);
@@ -1887,8 +1925,11 @@ void ExtrinsicReflectorBasedCalibrator::calibrateSensors()
     publishMetrics();
     return;
   }
-  auto transformation_result = estimateTransformation();
-  evaluateTransformation(transformation_result);
+  TransformationResult transformation_result;
+  for (std::size_t track_index = 0; track_index < converged_tracks_.size(); track_index++) {
+    transformation_result = estimateTransformation(track_index);
+    evaluateTransformation(transformation_result, track_index);
+  }
   crossValEvaluation(transformation_result);
   publishMetrics();
 }

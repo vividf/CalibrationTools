@@ -267,16 +267,16 @@ visualization_msgs::msg::Marker Visualization::drawCalibrationStatusText(
     // Display average errors
     text_marker.text +=
       "\naverage_distance_error[cm]=" +
-      toStringWithPrecision(metrics.calibrated_distance_error * m_to_cm, 2) +
-      "\naverage_yaw_error[deg]=" + toStringWithPrecision(metrics.calibrated_yaw_error, 2);
+      toStringWithPrecision(metrics.calibrated_distance_errors.back() * m_to_cm, 2) +
+      "\naverage_yaw_error[deg]=" + toStringWithPrecision(metrics.calibrated_yaw_errors.back(), 2);
 
     // Display cross-validation errors
     if (converged_tracks_size > 3) {
       text_marker.text +=
         "\ncrossval_distance_error[cm]=" +
-        toStringWithPrecision(metrics.avg_crossval_calibrated_distance_error.back() * m_to_cm, 2) +
+        toStringWithPrecision(metrics.avg_crossval_calibrated_distance_errors.back() * m_to_cm, 2) +
         "\ncrossval_yaw_error[deg]=" +
-        toStringWithPrecision(metrics.avg_crossval_calibrated_yaw_error.back(), 2);
+        toStringWithPrecision(metrics.avg_crossval_calibrated_yaw_errors.back(), 2);
     }
   }
   text_marker.pose.position.x = 1.0;

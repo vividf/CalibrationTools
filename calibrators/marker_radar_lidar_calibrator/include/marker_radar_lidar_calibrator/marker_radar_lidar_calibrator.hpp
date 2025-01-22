@@ -42,6 +42,7 @@
 #include <tf2_ros/static_transform_broadcaster.h>
 #include <tf2_ros/transform_listener.h>
 
+#include <cstddef>
 #include <cstdint>
 #include <limits>
 #include <memory>
@@ -146,12 +147,12 @@ protected:
 
   std::tuple<
     pcl::PointCloud<common_types::PointType>::Ptr, pcl::PointCloud<common_types::PointType>::Ptr>
-  getPointsSet();
+  getPointsSet(const std::vector<Track> & tracks);
   std::tuple<double, double> get2DRotationDelta(
     std::vector<Track> converged_tracks, bool is_crossval);
 
-  TransformationResult estimateTransformation();
-  void evaluateTransformation(TransformationResult transformation_result);
+  TransformationResult estimateTransformation(std::size_t track_index);
+  void evaluateTransformation(TransformationResult transformation_result, std::size_t track_index);
   void crossValEvaluation(TransformationResult transformation_result);
   void evaluateCombinations(
     std::vector<std::vector<std::size_t>> & combinations, std::size_t num_of_samples,
@@ -159,6 +160,7 @@ protected:
 
   void publishMetrics();
   void calibrateSensors();
+  std::vector<Track> & getConvergedTracksSubset(std::size_t track_index);
 
   rcl_interfaces::msg::SetParametersResult paramCallback(
     const std::vector<rclcpp::Parameter> & parameters);
