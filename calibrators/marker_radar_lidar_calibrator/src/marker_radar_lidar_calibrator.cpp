@@ -196,7 +196,7 @@ ExtrinsicReflectorBasedCalibrator::ExtrinsicReflectorBasedCalibrator(
   parameters_.lidar_cluster_max_points =
     this->declare_parameter<int>("lidar_cluster_max_points", 2000);
   parameters_.radar_cluster_max_tolerance =
-    this->declare_parameter<double>("radar_cluster_max_tolerance", 0.5);
+    this->declare_parameter<double>("radar_cluster_max_tolerance", 0.1);
   parameters_.radar_cluster_min_points =
     this->declare_parameter<int>("radar_cluster_min_points", 1);
   parameters_.radar_cluster_max_points =
@@ -659,11 +659,11 @@ void ExtrinsicReflectorBasedCalibrator::lidarCallback(
     converged_tracks_.size(), transformation_type_, output_metrics_.methods[transformation_type_]);
   text_markers_pub_->publish(text_markers);
 
-  RCLCPP_INFO(
-    this->get_logger(),
-    "Lidar detections: %lu Radar detections: %lu Matches: %lu Converged tracks: "
-    "%lu",
-    lidar_detections.size(), radar_detections.size(), matches.size(), converged_tracks_.size());
+  // RCLCPP_INFO(
+  //   this->get_logger(),
+  //   "Lidar detections: %lu Radar detections: %lu Matches: %lu Converged tracks: "
+  //   "%lu",
+  //   lidar_detections.size(), radar_detections.size(), matches.size(), converged_tracks_.size());
 }
 
 void ExtrinsicReflectorBasedCalibrator::radarTracksCallback(
@@ -719,15 +719,15 @@ std::vector<Eigen::Vector3d> ExtrinsicReflectorBasedCalibrator::extractLidarRefl
     pcl::CropBox<common_types::PointType> box_filter;
     pcl::PointCloud<common_types::PointType>::Ptr tmp_lidar_pointcloud_ptr(
       new pcl::PointCloud<common_types::PointType>);
-    RCLCPP_INFO(this->get_logger(), "pre lidar_pointcloud_ptr=%lu", lidar_pointcloud_ptr->size());
-    RCLCPP_WARN(
-      this->get_logger(), "crop box parameters=%f | %f | %f",
-      parameters_.lidar_initial_crop_box_min_x, parameters_.lidar_initial_crop_box_min_y,
-      parameters_.lidar_initial_crop_box_min_z);
-    RCLCPP_WARN(
-      this->get_logger(), "crop box parameters=%f | %f | %f",
-      parameters_.lidar_initial_crop_box_max_x, parameters_.lidar_initial_crop_box_max_y,
-      parameters_.lidar_initial_crop_box_max_z);
+    // RCLCPP_INFO(this->get_logger(), "pre lidar_pointcloud_ptr=%lu",
+    // lidar_pointcloud_ptr->size()); RCLCPP_WARN(
+    //   this->get_logger(), "crop box parameters=%f | %f | %f",
+    //   parameters_.lidar_initial_crop_box_min_x, parameters_.lidar_initial_crop_box_min_y,
+    //   parameters_.lidar_initial_crop_box_min_z);
+    // RCLCPP_WARN(
+    //   this->get_logger(), "crop box parameters=%f | %f | %f",
+    //   parameters_.lidar_initial_crop_box_max_x, parameters_.lidar_initial_crop_box_max_y,
+    //   parameters_.lidar_initial_crop_box_max_z);
     box_filter.setMin(Eigen::Vector4f(
       parameters_.lidar_initial_crop_box_min_x, parameters_.lidar_initial_crop_box_min_y,
       parameters_.lidar_initial_crop_box_min_z, 1.0));
@@ -737,7 +737,7 @@ std::vector<Eigen::Vector3d> ExtrinsicReflectorBasedCalibrator::extractLidarRefl
     box_filter.setInputCloud(lidar_pointcloud_ptr);
     box_filter.filter(*tmp_lidar_pointcloud_ptr);
     lidar_pointcloud_ptr.swap(tmp_lidar_pointcloud_ptr);
-    RCLCPP_INFO(this->get_logger(), "lidar_pointcloud_ptr=%lu", lidar_pointcloud_ptr->size());
+    // RCLCPP_INFO(this->get_logger(), "lidar_pointcloud_ptr=%lu", lidar_pointcloud_ptr->size());
   }
 
   if (extract_background_model && !valid_background_model) {
@@ -793,8 +793,8 @@ std::vector<Eigen::Vector3d> ExtrinsicReflectorBasedCalibrator::extractLidarRefl
   colored_clusters_pointcloud_ptr->width = colored_clusters_pointcloud_ptr->size();
   colored_clusters_pointcloud_ptr->height = 1;
 
-  RCLCPP_INFO(
-    this->get_logger(), "Colored clusters size=%lu", colored_clusters_pointcloud_ptr->size());
+  // RCLCPP_INFO(
+  //   this->get_logger(), "Colored clusters size=%lu", colored_clusters_pointcloud_ptr->size());
 
   sensor_msgs::msg::PointCloud2 background_msg;
   pcl::toROSMsg(*lidar_background_model_.pointcloud_, background_msg);
@@ -902,7 +902,7 @@ std::vector<Eigen::Vector3d> ExtrinsicReflectorBasedCalibrator::extractRadarRefl
 
   detections.reserve(clusters.size());
 
-  RCLCPP_INFO(this->get_logger(), "Extracting radar reflectors from clusters");
+  // RCLCPP_INFO(this->get_logger(), "Extracting radar reflectors from clusters");
 
   for (const auto & cluster : clusters) {
     Eigen::Vector3d p_avg = Eigen::Vector3d::Zero();
@@ -912,9 +912,11 @@ std::vector<Eigen::Vector3d> ExtrinsicReflectorBasedCalibrator::extractRadarRefl
     }
 
     p_avg /= cluster->points.size();
-    RCLCPP_INFO(
-      this->get_logger(), "\t Radar reflector id=%lu size=%lu center: x=%.2f y=%.2f z=%.2f",
-      detections.size(), cluster->points.size(), p_avg.x(), p_avg.y(), p_avg.z());
+    if (p_avg.x() > 5.5 && p_avg.x() < 6 && p_avg.y() > -0.03 && p_avg.y() < 0.03) {
+      RCLCPP_INFO(
+        this->get_logger(), "\t Radar reflector id=%lu size=%lu center: x=%.2f y=%.2f z=%.2f",
+        detections.size(), cluster->points.size(), p_avg.x(), p_avg.y(), p_avg.z());
+    }
 
     detections.emplace_back(p_avg);
   }
@@ -1029,8 +1031,8 @@ void ExtrinsicReflectorBasedCalibrator::extractForegroundPoints(
   pcl::PointCloud<common_types::PointType>::Ptr & foreground_pointcloud_ptr,
   Eigen::Vector4f & ground_model)
 {
-  RCLCPP_INFO(this->get_logger(), "Extracting foreground");
-  RCLCPP_INFO(this->get_logger(), "\t initial points: %lu", sensor_pointcloud_ptr->size());
+  // RCLCPP_INFO(this->get_logger(), "Extracting foreground");
+  // RCLCPP_INFO(this->get_logger(), "\t initial points: %lu", sensor_pointcloud_ptr->size());
 
   // Crop box
   pcl::PointCloud<common_types::PointType>::Ptr cropped_pointcloud_ptr(
@@ -1040,7 +1042,7 @@ void ExtrinsicReflectorBasedCalibrator::extractForegroundPoints(
   crop_filter.setMax(background_model.max_point_);
   crop_filter.setInputCloud(sensor_pointcloud_ptr);
   crop_filter.filter(*cropped_pointcloud_ptr);
-  RCLCPP_INFO(this->get_logger(), "\t cropped points: %lu", cropped_pointcloud_ptr->size());
+  // RCLCPP_INFO(this->get_logger(), "\t cropped points: %lu", cropped_pointcloud_ptr->size());
 
   // Fast hash
   pcl::PointCloud<common_types::PointType>::Ptr voxel_filtered_pointcloud_ptr(
@@ -1065,8 +1067,8 @@ void ExtrinsicReflectorBasedCalibrator::extractForegroundPoints(
       voxel_filtered_pointcloud_ptr->emplace_back(p);
     }
   }
-  RCLCPP_INFO(
-    this->get_logger(), "\t voxel filtered points: %lu", voxel_filtered_pointcloud_ptr->size());
+  // RCLCPP_INFO(
+  //   this->get_logger(), "\t voxel filtered points: %lu", voxel_filtered_pointcloud_ptr->size());
 
   // K-search
   pcl::PointCloud<common_types::PointType>::Ptr tree_filtered_pointcloud_ptr(
@@ -1086,8 +1088,8 @@ void ExtrinsicReflectorBasedCalibrator::extractForegroundPoints(
     }
   }
 
-  RCLCPP_INFO(
-    this->get_logger(), "\t tree filtered points: %lu", tree_filtered_pointcloud_ptr->size());
+  // RCLCPP_INFO(
+  //   this->get_logger(), "\t tree filtered points: %lu", tree_filtered_pointcloud_ptr->size());
 
   if (!use_ransac) {
     foreground_pointcloud_ptr = tree_filtered_pointcloud_ptr;
@@ -1121,8 +1123,9 @@ void ExtrinsicReflectorBasedCalibrator::extractForegroundPoints(
     }
   }
 
-  RCLCPP_INFO(
-    this->get_logger(), "\t ransac filtered points: %lu", ransac_filtered_pointcloud_ptr->size());
+  // RCLCPP_INFO(
+  //   this->get_logger(), "\t ransac filtered points: %lu",
+  //   ransac_filtered_pointcloud_ptr->size());
 
   foreground_pointcloud_ptr = ransac_filtered_pointcloud_ptr;
   ground_model = Eigen::Vector4f(
@@ -1148,8 +1151,8 @@ ExtrinsicReflectorBasedCalibrator::extractClusters(
   cluster_extractor.setInputCloud(foreground_pointcloud_ptr);
   cluster_extractor.extract(cluster_indices);
 
-  RCLCPP_INFO(
-    this->get_logger(), "Cluster extraction input size: %lu", foreground_pointcloud_ptr->size());
+  // RCLCPP_INFO(
+  //   this->get_logger(), "Cluster extraction input size: %lu", foreground_pointcloud_ptr->size());
 
   std::vector<pcl::PointCloud<common_types::PointType>::Ptr> cluster_vector;
 
@@ -1165,8 +1168,8 @@ ExtrinsicReflectorBasedCalibrator::extractClusters(
     cluster_pointcloud_ptr->width = cluster_pointcloud_ptr->size();
     cluster_pointcloud_ptr->height = 1;
     cluster_pointcloud_ptr->is_dense = true;
-    RCLCPP_INFO(
-      this->get_logger(), "\t found cluster of size: %lu", cluster_pointcloud_ptr->size());
+    // RCLCPP_INFO(
+    //   this->get_logger(), "\t found cluster of size: %lu", cluster_pointcloud_ptr->size());
 
     cluster_vector.push_back(cluster_pointcloud_ptr);
   }
@@ -1237,9 +1240,9 @@ std::vector<Eigen::Vector3d> ExtrinsicReflectorBasedCalibrator::findReflectorsFr
         center /= indexes.size();
       }
 
-      RCLCPP_INFO(
-        this->get_logger(), "\t Lidar reflector id=%lu size=%lu center: x=%.2f y=%.2f z=%.2f",
-        reflector_centers.size(), indexes.size(), center.x(), center.y(), center.z());
+      // RCLCPP_INFO(
+      //   this->get_logger(), "\t Lidar reflector id=%lu size=%lu center: x=%.2f y=%.2f z=%.2f",
+      //   reflector_centers.size(), indexes.size(), center.x(), center.y(), center.z());
       reflector_centers.push_back(center);
     }
   }
@@ -1343,22 +1346,23 @@ ExtrinsicReflectorBasedCalibrator::matchDetections(
       return transformed_point;
     });
 
-  RCLCPP_INFO(
-    this->get_logger(),
-    "Lidar reflectors in radar coordinate system (using the initial transformation)");
-  for (std::size_t lidar_index = 0; lidar_index < lidar_detections.size(); lidar_index++) {
-    const auto & lidar_detection = lidar_detections_transformed[lidar_index];
-    RCLCPP_INFO(
-      this->get_logger(), "\t Lidar reflector (rcs) id=%lu size=%lu center: x=%.2f y=%.2f z=%.2f",
-      lidar_index, lidar_detections.size(), lidar_detection.x(), lidar_detection.y(),
-      lidar_detection.z());
-  }
+  // RCLCPP_INFO(
+  //   this->get_logger(),
+  //   "Lidar reflectors in radar coordinate system (using the initial transformation)");
+  // for (std::size_t lidar_index = 0; lidar_index < lidar_detections.size(); lidar_index++) {
+  //   const auto & lidar_detection = lidar_detections_transformed[lidar_index];
+  //   RCLCPP_INFO(
+  //     this->get_logger(), "\t Lidar reflector (rcs) id=%lu size=%lu center: x=%.2f y=%.2f
+  //     z=%.2f", lidar_index, lidar_detections.size(), lidar_detection.x(), lidar_detection.y(),
+  //     lidar_detection.z());
+  // }
 
   std::vector<std::size_t> lidar_to_radar_closest_idx, radar_to_lidar_closest_idx;
   lidar_to_radar_closest_idx.resize(lidar_detections.size());
   radar_to_lidar_closest_idx.resize(radar_detections.size());
 
-  RCLCPP_INFO(this->get_logger(), "Matching each lidar detections to its closest radar detection");
+  // RCLCPP_INFO(this->get_logger(), "Matching each lidar detections to its closest radar
+  // detection");
 
   for (std::size_t lidar_index = 0; lidar_index < lidar_detections.size(); lidar_index++) {
     float closest_distance = std::numeric_limits<float>::max();
@@ -1374,13 +1378,14 @@ ExtrinsicReflectorBasedCalibrator::matchDetections(
       }
     }
 
-    RCLCPP_INFO(
-      this->get_logger(), "\tClosest radar to lidar=%lu is %lu with distance %f", lidar_index,
-      closest_index, closest_distance);
+    // RCLCPP_INFO(
+    //   this->get_logger(), "\tClosest radar to lidar=%lu is %lu with distance %f", lidar_index,
+    //   closest_index, closest_distance);
     lidar_to_radar_closest_idx[lidar_index] = closest_index;
   }
 
-  RCLCPP_INFO(this->get_logger(), "Matching each radar detections to its closest lidar detection");
+  // RCLCPP_INFO(this->get_logger(), "Matching each radar detections to its closest lidar
+  // detection");
 
   for (std::size_t radar_index = 0; radar_index < radar_detections.size(); radar_index++) {
     float closest_distance = std::numeric_limits<float>::max();
@@ -1396,20 +1401,20 @@ ExtrinsicReflectorBasedCalibrator::matchDetections(
       }
     }
 
-    RCLCPP_INFO(
-      this->get_logger(), "\tClosest lidar to radar=%lu is %lu with distance %f", radar_index,
-      closest_index, closest_distance);
+    // RCLCPP_INFO(
+    //   this->get_logger(), "\tClosest lidar to radar=%lu is %lu with distance %f", radar_index,
+    //   closest_index, closest_distance);
 
     radar_to_lidar_closest_idx[radar_index] = closest_index;
   }
 
   for (std::size_t lidar_index = 0; lidar_index < lidar_detections.size(); lidar_index++) {
     std::size_t closest_radar_index = lidar_to_radar_closest_idx[lidar_index];
-    RCLCPP_INFO(
-      this->get_logger(), "lidar_index = %lu / %lu", lidar_index, lidar_detections.size());
-    RCLCPP_INFO(
-      this->get_logger(), "closest_radar_index = %lu / %lu", closest_radar_index,
-      radar_detections.size());
+    // RCLCPP_INFO(
+    //   this->get_logger(), "lidar_index = %lu / %lu", lidar_index, lidar_detections.size());
+    // RCLCPP_INFO(
+    //   this->get_logger(), "closest_radar_index = %lu / %lu", closest_radar_index,
+    //   radar_detections.size());
     float distance =
       (lidar_detections_transformed[lidar_index] - radar_detections[closest_radar_index]).norm();
     if (
