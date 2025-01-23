@@ -19,6 +19,7 @@
 
 #include <fstream>
 #include <iostream>
+#include <iterator>
 #include <random>
 #include <sstream>
 #include <string>
@@ -68,29 +69,30 @@ void updateTrackIds(std::vector<Track> & converged_tracks)
 }
 
 std::pair<double, double> computeCalibrationError(
-  std::vector<Track> & converged_tracks, TransformationType transformation_type,
-  const Eigen::Isometry3d & radar_to_lidar_isometry, bool record_error_in_track)
+  std::vector<Track>::iterator & begin, std::vector<Track>::iterator & end,
+  const TransformationType transformation_type, const Eigen::Isometry3d & radar_to_lidar_isometry,
+  const bool record_error_in_track)
 {
   double total_distance_error = 0.0;
   double total_yaw_error = 0.0;
 
-  for (auto & track : converged_tracks) {
-    auto lidar_estimation_transformed = radar_to_lidar_isometry * track.lidar_estimation;
+  for (auto track = begin; track != end; ++track) {
+    auto lidar_estimation_transformed = radar_to_lidar_isometry * track->lidar_estimation;
 
     auto distance_error =
-      getDistanceError(transformation_type, lidar_estimation_transformed, track.radar_estimation);
-    auto yaw_error = getYawError(lidar_estimation_transformed, track.radar_estimation);
+      getDistanceError(transformation_type, lidar_estimation_transformed, track->radar_estimation);
+    auto yaw_error = getYawError(lidar_estimation_transformed, track->radar_estimation);
 
     if (record_error_in_track) {
-      track.distance_error = distance_error;
-      track.yaw_error = yaw_error * 180.0 / (M_PI);
+      track->distance_error = distance_error;
+      track->yaw_error = yaw_error * 180.0 / (M_PI);
     }
     total_distance_error += distance_error;
     total_yaw_error += yaw_error;
   }
 
-  total_distance_error /= static_cast<double>(converged_tracks.size());
-  total_yaw_error *= 180.0 / (M_PI * static_cast<double>(converged_tracks.size()));
+  total_distance_error /= static_cast<double>(std::distance(begin, end));
+  total_yaw_error *= 180.0 / (M_PI * static_cast<double>(std::distance(begin, end)));
 
   return std::make_pair(total_distance_error, total_yaw_error);
 }
@@ -114,55 +116,61 @@ double getYawError(Eigen::Vector3d v1, Eigen::Vector3d v2)
   return std::abs(std::acos(v1.dot(v2) / (v1.norm() * v2.norm())));
 }
 
-void randomFindCombinations(
-  std::size_t n, std::size_t k, std::vector<std::size_t> & curr, std::size_t first_num,
-  std::vector<std::vector<std::size_t>> & combinations, std::size_t & count,
-  std::size_t max_number_of_combination_samples, std::mt19937 & mt)
+size_t combination_count(const size_t n, const size_t k)
 {
-  if (curr.size() == k) {
-    combinations.push_back(curr);
-    count++;
-    if (count >= max_number_of_combination_samples) return;
-    return;
+  if (k > n) return 0;
+  size_t result = 1;
+  for (size_t i = 0; i < k; ++i) {
+    result *= (n - i);
+    result /= (i + 1);
+  }
+  return result;
+}
+
+void generateAllCombinations(
+  const std::size_t n, const std::size_t k, std::vector<std::vector<std::size_t>> & combinations)
+{
+  std::vector<std::size_t> nums(n);
+  for (std::size_t i = 0; i < n; ++i) {
+    nums[i] = i;
   }
 
-  std::vector<std::size_t> available_nums;
-  for (std::size_t num = first_num; num <= n; num++) {
-    available_nums.push_back(num);
-  }
+  std::vector<bool> bitmask(k, true);
+  bitmask.resize(n, false);
 
-  std::shuffle(available_nums.begin(), available_nums.end(), mt);
-
-  for (std::size_t num : available_nums) {
-    curr.push_back(num);
-    randomFindCombinations(
-      n, k, curr, num + 1, combinations, count, max_number_of_combination_samples, mt);
-    curr.pop_back();
-    if (count >= max_number_of_combination_samples) return;
-  }
+  do {
+    std::vector<std::size_t> selected;
+    for (std::size_t i = 0; i < n; ++i) {
+      if (bitmask[i]) selected.push_back(nums[i]);
+    }
+    combinations.push_back(selected);
+  } while (std::prev_permutation(bitmask.begin(), bitmask.end()));
 }
 
 void selectCombinations(
-  const rclcpp::Logger & logger, std::size_t tracks_size, std::size_t num_of_samples,
-  std::vector<std::vector<std::size_t>> & combinations,
-  std::size_t max_number_of_combination_samples)
+  const std::size_t n, const std::size_t k, const std::size_t max_number_of_combination_samples,
+  std::vector<std::vector<std::size_t>> & combinations)
 {
-  RCLCPP_INFO(
-    logger, "Generating up to %zu random combinations (tracks_size: %zu, num_of_samples: %zu)",
-    max_number_of_combination_samples, tracks_size, num_of_samples);
+  bool use_random_sample = (n > 20) && (k >= 5 && k <= 15);
+  if (!use_random_sample && max_number_of_combination_samples >= combination_count(n, k)) {
+    generateAllCombinations(n, k, combinations);
+  } else {
+    std::random_device rd;
+    std::mt19937 mt(rd());
 
-  std::vector<std::size_t> curr;
-  std::size_t count = 0;
-  std::random_device rd;
-  std::mt19937 mt(rd());
+    std::vector<std::size_t> nums(n);
+    for (std::size_t i = 0; i < n; ++i) {
+      nums[i] = i;
+    }
 
-  randomFindCombinations(
-    tracks_size - 1, num_of_samples, curr, 0, combinations, count,
-    max_number_of_combination_samples, mt);
-
-  RCLCPP_INFO(
-    logger, "Generated %zu random combinations (limited to max %zu)", combinations.size(),
-    max_number_of_combination_samples);
+    std::size_t count = 0;
+    while (count < max_number_of_combination_samples) {
+      std::vector<std::size_t> selected;
+      std::sample(nums.begin(), nums.end(), std::back_inserter(selected), k, mt);
+      combinations.push_back(selected);
+      count++;
+    }
+  }
 }
 
 void parseHeader(

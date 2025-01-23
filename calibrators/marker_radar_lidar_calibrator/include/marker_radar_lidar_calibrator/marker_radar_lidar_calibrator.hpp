@@ -147,9 +147,9 @@ protected:
 
   std::tuple<
     pcl::PointCloud<common_types::PointType>::Ptr, pcl::PointCloud<common_types::PointType>::Ptr>
-  getPointsSet(const std::vector<Track> & tracks);
+  getPointsSet(std::vector<Track>::iterator & begin, std::vector<Track>::iterator & end);
   std::tuple<double, double> get2DRotationDelta(
-    std::vector<Track> converged_tracks, bool is_crossval);
+    std::vector<Track>::iterator & begin, std::vector<Track>::iterator & end, bool is_crossval);
 
   TransformationResult estimateTransformation(std::size_t track_index);
   void evaluateTransformation(TransformationResult transformation_result, std::size_t track_index);
@@ -160,7 +160,6 @@ protected:
 
   void publishMetrics();
   void calibrateSensors();
-  std::vector<Track> & getConvergedTracksSubset(std::size_t track_index);
 
   rcl_interfaces::msg::SetParametersResult paramCallback(
     const std::vector<rclcpp::Parameter> & parameters);
