@@ -34,15 +34,19 @@ geometry_msgs::msg::Point eigenToPointMsg(const Eigen::Vector3d & p_eigen);
 void updateTrackIds(std::vector<Track> & converged_tracks);
 
 std::pair<double, double> computeCalibrationError(
-  std::vector<Track> & converged_tracks, TransformationType transformation_type,
-  const Eigen::Isometry3d & radar_to_lidar_isometry, bool record_error_in_track);
+  std::vector<Track>::iterator & begin, std::vector<Track>::iterator & end,
+  const TransformationType transformation_type, const Eigen::Isometry3d & radar_to_lidar_isometry,
+  const bool record_error_in_track);
 double getDistanceError(
   TransformationType transformation_type, Eigen::Vector3d v1, Eigen::Vector3d v2);
 double getYawError(Eigen::Vector3d v1, Eigen::Vector3d v2);
 
+size_t combination_count(const size_t n, const size_t k);
+void generateAllCombinations(
+  const std::size_t n, const std::size_t k, std::vector<std::vector<std::size_t>> & combinations);
 void selectCombinations(
-  const rclcpp::Logger & logger, std::size_t tracks_size, std::size_t num_of_samples,
-  std::vector<std::vector<std::size_t>> & combinations, size_t max_number_of_combination_samples);
+  const std::size_t n, const std::size_t k, const std::size_t max_number_of_combination_samples,
+  std::vector<std::vector<std::size_t>> & combinations);
 
 // Load database
 void parseHeader(
